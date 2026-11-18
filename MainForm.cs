@@ -4,10 +4,7 @@ using System.Drawing.Printing;
 namespace MeyertecPrint;
 
 /// <summary>
-/// Главное окно MEYERTEC PRINT.
-/// Верхняя панель (меню): "Файл", "Вид", "Язык" — дизайн с сайта MEYERTEC
-/// (тёмная панель #0f202a, жёлтая подсветка #ffcb04, шрифт Rubik).
-/// Все названия берутся из языковых файлов (папка Languages).
+/// Главное окно MEYERTEC PRINT и команды текущего проекта.
 /// </summary>
 public class MainForm : BrandForm
 {
@@ -22,27 +19,24 @@ public class MainForm : BrandForm
     private ToolStripMenuItem _newItem = null!;
     private ToolStripMenuItem _openItem = null!;
     private ToolStripMenuItem _saveItem = null!;
+    private ToolStripMenuItem _saveAsItem = null!;
     private ToolStripMenuItem _importCsvItem = null!;
     private ToolStripMenuItem _openWstxItem = null!;
     private ToolStripMenuItem _saveWstxItem = null!;
+    private ToolStripMenuItem _pageSettingsItem = null!;
     private ToolStripMenuItem _printSettingsItem = null!;
+    private ToolStripMenuItem _previewItem = null!;
     private ToolStripMenuItem _printItem = null!;
     private ToolStripMenuItem _viewMenu = null!;
     private ToolStripMenuItem _unitsMmItem = null!;
     private ToolStripMenuItem _unitsInchItem = null!;
 
-    private Panel _toolbar = null!;
+    private ToolStrip _toolbar = null!;
     private WelcomeView _welcome = null!;
-    private readonly ImageList _rowHeight = new() { ImageSize = new Size(1, 34) };
-    private readonly ToolTip _toolTips = new();
-    private Button _tbNew = null!;
-    private Button _tbOpen = null!;
-    private Button _tbSave = null!;
-    private Button _tbSaveAs = null!;
-    private Button _tbPageSetup = null!;
-    private Button _tbPrintSettings = null!;
-    private Button _tbPreview = null!;
-    private Button _tbPrint = null!;
+    private readonly ImageList _rowHeight = new() { ImageSize = new Size(1, 32) };
+    private ToolStripButton _tbNew = null!, _tbOpen = null!, _tbSave = null!, _tbImport = null!;
+    private ToolStripButton _tbPreview = null!, _tbPrint = null!;
+    private ToolStripDropDownButton _tbSettings = null!;
 
     private TabControl _tabs = null!;
     private TabPage _ribbonTab = null!;
@@ -50,6 +44,7 @@ public class MainForm : BrandForm
     private LabelEditorControl _editor = null!;
 
     private ListView _ribbonList = null!;
+    private Label _ribbonHint = null!;
     private ColumnHeader _numberColumn = null!;
     private ColumnHeader _nameColumn = null!;
     private Button _recordEdit = null!, _recordCopy = null!, _recordDelete = null!, _recordUp = null!, _recordDown = null!;
@@ -67,6 +62,7 @@ public class MainForm : BrandForm
 
     public MainForm()
     {
+        SuspendLayout();
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = AppTitle;
@@ -80,7 +76,6 @@ public class MainForm : BrandForm
         _welcome = new WelcomeView(NewProject, OpenProject);
         BuildRibbonList();
         BuildStatusBar();
-        BuildToolbar();
         BuildMenu();
         ApplyStrings();
         RefreshProjectUi();
@@ -95,19 +90,20 @@ public class MainForm : BrandForm
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { AppLog.Write(ex, "recovery initialization"); }
+        ResumeLayout();
     }
 
     private void BuildMenu()
     {
+        var highContrast = SystemInformation.HighContrast;
         _menu = new MenuStrip
         {
             Dock = DockStyle.Top,
-            BackColor = Theme.ProjectBar,
-            ForeColor = Color.White,
-            Font = Theme.UiFont(9.75f),
-            Renderer = new BrandMenuRenderer(),
-            Margin = Padding.Empty, Padding = new Padding(14, 3, 14, 3),
-            ImageScalingSize = new Size(22, 22),
+            BackColor = highContrast ? SystemColors.Menu : Theme.ProjectBar,
+            ForeColor = highContrast ? SystemColors.MenuText : Color.White,
+            Font = Font,
+            Renderer = highContrast ? new ToolStripSystemRenderer() : new BrandMenuRenderer(),
+            Margin = Padding.Empty, Padding = new Padding(12, 4, 12, 4)
         };
 
         _fileMenu = new ToolStripMenuItem();
@@ -117,14 +113,20 @@ public class MainForm : BrandForm
         _openItem.Click += (_, _) => OpenProject();
         _saveItem = new ToolStripMenuItem { ShortcutKeys = Keys.Control | Keys.S };
         _saveItem.Click += (_, _) => SaveProject();
+        _saveAsItem = new ToolStripMenuItem { ShortcutKeys = Keys.Control | Keys.Shift | Keys.S };
+        _saveAsItem.Click += (_, _) => SaveProject(saveAs: true);
         _importCsvItem = new ToolStripMenuItem();
         _importCsvItem.Click += (_, _) => ImportCsv();
         _openWstxItem = new ToolStripMenuItem();
         _openWstxItem.Click += (_, _) => OpenWstx();
         _saveWstxItem = new ToolStripMenuItem();
         _saveWstxItem.Click += (_, _) => SaveWstx();
+        _pageSettingsItem = new ToolStripMenuItem();
+        _pageSettingsItem.Click += (_, _) => PageSettings();
         _printSettingsItem = new ToolStripMenuItem();
         _printSettingsItem.Click += (_, _) => PrintSettings();
+        _previewItem = new ToolStripMenuItem { ShortcutKeys = Keys.Control | Keys.Shift | Keys.P };
+        _previewItem.Click += (_, _) => ShowPreview();
         _printItem = new ToolStripMenuItem { ShortcutKeys = Keys.Control | Keys.P };
         _printItem.Click += (_, _) => PrintProject();
         _exitItem = new ToolStripMenuItem();
@@ -138,18 +140,11 @@ public class MainForm : BrandForm
         _viewMenu.DropDownItems.Add(_unitsMmItem);
         _viewMenu.DropDownItems.Add(_unitsInchItem);
 
-        _fileMenu.DropDownItems.Add(_newItem);
-        _fileMenu.DropDownItems.Add(_openItem);
-        _fileMenu.DropDownItems.Add(_saveItem);
-        _fileMenu.DropDownItems.Add(new ToolStripSeparator());
-        _fileMenu.DropDownItems.Add(_importCsvItem);
-        _fileMenu.DropDownItems.Add(_openWstxItem);
-        _fileMenu.DropDownItems.Add(_saveWstxItem);
-        _fileMenu.DropDownItems.Add(new ToolStripSeparator());
-        _fileMenu.DropDownItems.Add(_printSettingsItem);
-        _fileMenu.DropDownItems.Add(_printItem);
-        _fileMenu.DropDownItems.Add(new ToolStripSeparator());
-        _fileMenu.DropDownItems.Add(_exitItem);
+        _fileMenu.DropDownItems.AddRange([
+            _newItem, _openItem, _saveItem, _saveAsItem, new ToolStripSeparator(),
+            _importCsvItem, _openWstxItem, _saveWstxItem, new ToolStripSeparator(),
+            _pageSettingsItem, _printSettingsItem, _previewItem, _printItem, new ToolStripSeparator(), _exitItem
+        ]);
 
         _languageMenu = new ToolStripMenuItem();
         foreach (var code in L10n.Available())
@@ -165,6 +160,7 @@ public class MainForm : BrandForm
         _menu.Items.Add(_languageMenu);
 
         MainMenuStrip = _menu;
+        BuildToolbar();
         var workspace = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
         workspace.Controls.Add(_welcome);
         workspace.Controls.Add(_tabs);
@@ -190,50 +186,48 @@ public class MainForm : BrandForm
 
     private void BuildToolbar()
     {
-        _toolbar = new Panel
-        {
-            Dock = DockStyle.Top, Height = 42, BackColor = Theme.ProjectBar,
-            Margin = Padding.Empty, Padding = new Padding(14, 0, 12, 0)
-        };
-        var commands = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Left, AutoSize = true, WrapContents = false, BackColor = Theme.ProjectBar,
-            Padding = new Padding(0, 5, 0, 0)
-        };
-        _tbNew = MakeToolButton("01_new_file", NewProject);
-        _tbOpen = MakeToolButton("02_open", OpenProject);
-        _tbSave = MakeToolButton("03_save", () => SaveProject(), caption: true);
-        _tbSaveAs = MakeToolButton("04_save_as", () => SaveProject(saveAs: true));
-        _tbPageSetup = MakeToolButton("05_page_setup", PageSettings);
-        _tbPrintSettings = MakeToolButton("06_print_setup", PrintSettings);
-        _tbPreview = MakeToolButton("07_preview", ShowPreview, caption: true, primary: true);
+        _tbNew = MakeToolButton("01_new_file", NewProject, caption: false);
+        _tbOpen = MakeToolButton("02_open", OpenProject, caption: false);
+        _tbSave = MakeToolButton("03_save", () => SaveProject());
+        _tbImport = MakeToolButton(null, ImportCsv);
+        _tbPreview = MakeToolButton("07_preview", ShowPreview);
         _tbPrint = MakeToolButton("08_print", PrintProject);
-        foreach (var button in new[] { _tbNew, _tbOpen, _tbSave, _tbSaveAs, _tbPageSetup, _tbPrintSettings, _tbPrint, _tbPreview })
-            commands.Controls.Add(button);
-        _tbPageSetup.Margin = new Padding(14, 0, 0, 0);
-        _tbPreview.Margin = new Padding(12, 0, 0, 0);
-        _toolbar.Controls.Add(commands);
+        _tbSettings = new ToolStripDropDownButton
+        {
+            Image = Theme.Icon("06_print_setup", LogicalToDeviceUnits(18)),
+            ForeColor = Theme.Text, Padding = new Padding(7, 4, 7, 4)
+        };
+        _tbSettings.DropDownItems.Add(new ToolStripMenuItem
+        {
+            Image = Theme.Icon("05_page_setup", LogicalToDeviceUnits(18))
+        });
+        _tbSettings.DropDownItems.Add(new ToolStripMenuItem());
+        _tbSettings.DropDownItems[0].Click += (_, _) => PageSettings();
+        _tbSettings.DropDownItems[1].Click += (_, _) => PrintSettings();
+        _toolbar = new ToolStrip
+        {
+            Dock = DockStyle.Fill, GripStyle = ToolStripGripStyle.Hidden, CanOverflow = true,
+            LayoutStyle = ToolStripLayoutStyle.HorizontalStackWithOverflow,
+            TabStop = true, BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Font,
+            ImageScalingSize = new Size(18, 18), Padding = new Padding(12, 4, 12, 5),
+            Renderer = SystemInformation.HighContrast ? new ToolStripSystemRenderer() : new BrandCommandRenderer(_tbPreview)
+        };
+        _tbPrint.Alignment = _tbPreview.Alignment = ToolStripItemAlignment.Right;
+        _toolbar.Items.AddRange([
+            _tbNew, _tbOpen, _tbSave, new ToolStripSeparator(), _tbImport,
+            _tbSettings, _tbPrint, _tbPreview
+        ]);
     }
 
-    private Button MakeToolButton(string icon, Action action, bool enabled = true,
-        bool caption = false, bool primary = false)
+    private ToolStripButton MakeToolButton(string? icon, Action action, bool caption = true)
     {
-        var button = new Button
+        var button = new ToolStripButton
         {
-            Image = Theme.Icon(icon, LogicalToDeviceUnits(20)), Size = new Size(32, 32),
-            MinimumSize = new Size(32, 32), Margin = new Padding(2, 0, 0, 0),
-            AutoSize = caption, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            TextImageRelation = TextImageRelation.ImageBeforeText,
-            Padding = caption ? new Padding(10, 0, 10, 0) : Padding.Empty,
-            Enabled = enabled
+            Image = icon is null ? null : Theme.Icon(icon, LogicalToDeviceUnits(18)),
+            DisplayStyle = caption ? ToolStripItemDisplayStyle.ImageAndText : ToolStripItemDisplayStyle.Image,
+            ForeColor = Theme.Text, Padding = new Padding(9, 4, 9, 4), Margin = new Padding(0, 0, 4, 0),
+            AutoToolTip = false
         };
-        Theme.StyleButton(button);
-        button.BackColor = Theme.ProjectBar;
-        button.ForeColor = primary ? Theme.Yellow : Color.White;
-        button.FlatAppearance.BorderSize = caption ? 1 : 0;
-        button.FlatAppearance.BorderColor = primary ? Theme.Yellow : Color.FromArgb(77, 83, 86);
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(42, 49, 52);
-        button.FlatAppearance.MouseDownBackColor = Theme.Dark;
         button.Click += (_, _) => action();
         return button;
     }
@@ -251,64 +245,93 @@ public class MainForm : BrandForm
             HeaderStyle = ColumnHeaderStyle.Nonclickable,
             MultiSelect = false,
             HideSelection = false,
-            BackColor = Color.White,
-            ForeColor = Theme.Dark,
-            Padding = new Padding(8),
+            BackColor = Theme.Surface,
+            ForeColor = Theme.Text,
+            ShowItemToolTips = true,
+            Margin = Padding.Empty
         };
-        _numberColumn = new ColumnHeader { Width = 70 };
-        _nameColumn = new ColumnHeader { Width = 400 };
+        _numberColumn = new ColumnHeader();
+        _nameColumn = new ColumnHeader();
         _ribbonList.Columns.Add(_numberColumn);
         _ribbonList.Columns.Add(_nameColumn);
+        _ribbonList.Resize += (_, _) => FitRibbonColumns();
 
-        // Вкладка «Лента» — список этикеток; вкладка «Редактор» — полоса с ячейками
-        _editor = new LabelEditorControl();
-        // Без Dock.Fill редактор остаётся блоком 200×100 в углу вкладки:
-        // холст сжимается до нуля, панели обрезаются (самопроверка: раздел 10)
-        _editor.Dock = DockStyle.Fill;
+        _editor = new LabelEditorControl { Dock = DockStyle.Fill };
         _editor.LayoutChanged += OnEditorLayoutChanged;
 
         _tabs = new TabControl
         {
-            Dock = DockStyle.Fill, SizeMode = TabSizeMode.Fixed, ItemSize = new Size(124, 33),
-            DrawMode = TabDrawMode.OwnerDrawFixed
+            Dock = DockStyle.Fill, ItemSize = new Size(0, 34), Padding = new Point(17, 5),
+            DrawMode = SystemInformation.HighContrast ? TabDrawMode.Normal : TabDrawMode.OwnerDrawFixed
         };
         _tabs.DrawItem += (_, e) =>
         {
             var selected = e.Index == _tabs.SelectedIndex;
             var tab = _tabs.TabPages[e.Index];
+            var bounds = e.Bounds;
             using var fill = new SolidBrush(selected ? Color.White : Theme.LightBackground);
-            e.Graphics.FillRectangle(fill, e.Bounds);
-            TextRenderer.DrawText(e.Graphics, tab.Text, _tabs.Font, e.Bounds, Theme.Dark,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            e.Graphics.FillRectangle(fill, bounds);
+            TextRenderer.DrawText(e.Graphics, tab.Text, _tabs.Font, bounds, selected ? Theme.Dark : Theme.SecondaryText,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
             if (selected)
             {
                 using var accent = new SolidBrush(Theme.Yellow);
-                e.Graphics.FillRectangle(accent, e.Bounds.X + 8, e.Bounds.Bottom - 3, e.Bounds.Width - 16, 3);
+                var line = LogicalToDeviceUnits(3);
+                e.Graphics.FillRectangle(accent, bounds.Left, bounds.Bottom - line, bounds.Width, line);
                 if (_tabs.Focused) e.DrawFocusRectangle();
             }
         };
-        _ribbonTab = new TabPage { BackColor = Color.White, Padding = new Padding(20, 18, 20, 12) };
+        _ribbonTab = new TabPage { BackColor = Theme.Surface, Padding = new Padding(16, 12, 16, 8) };
         _ribbonList.DoubleClick += (_, _) => EditRecord();
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 46, WrapContents = false };
+        _ribbonList.KeyDown += OnRibbonKeyDown;
+        _ribbonList.SelectedIndexChanged += (_, _) => UpdateRecordActions();
+        var actions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0, 10, 0, 0), WrapContents = true
+        };
         Button Action(Action run)
         {
-            var button = new Button { AutoSize = true, Height = 32, Margin = new Padding(0, 5, 8, 0) };
-            Theme.StyleButton(button); button.Click += (_, _) => run(); actions.Controls.Add(button); return button;
+            var button = new Button
+            {
+                AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 34),
+                Padding = new Padding(7, 0, 7, 0), Margin = new Padding(0, 0, 8, 4)
+            };
+            Theme.StyleButton(button);
+            button.Click += (_, _) => run();
+            actions.Controls.Add(button);
+            return button;
         }
-        _recordEdit = Action(EditRecord); _recordCopy = Action(CopyRecord); _recordDelete = Action(DeleteRecord);
-        _recordUp = Action(() => MoveRecord(-1)); _recordDown = Action(() => MoveRecord(1));
-        _ribbonTab.Controls.Add(_ribbonList); _ribbonTab.Controls.Add(actions);
+        _recordEdit = Action(EditRecord);
+        _recordCopy = Action(CopyRecord);
+        _recordUp = Action(() => MoveRecord(-1));
+        _recordDown = Action(() => MoveRecord(1));
+        _recordDelete = Action(DeleteRecord);
+        _ribbonHint = new Label
+        {
+            AutoSize = true, Dock = DockStyle.Fill, UseMnemonic = false, Padding = new Padding(12, 9, 12, 9),
+            ForeColor = Theme.SecondaryText, BackColor = SystemInformation.HighContrast ? Theme.Surface : Theme.LightBackground,
+            Margin = new Padding(0, 0, 0, 10)
+        };
+        var batch = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        batch.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        batch.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        batch.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        batch.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        batch.Controls.Add(_ribbonHint, 0, 0);
+        batch.Controls.Add(_ribbonList, 0, 1);
+        batch.Controls.Add(actions, 0, 2);
+        _ribbonTab.Controls.Add(batch);
         _editorTab = new TabPage { BackColor = Theme.LightBackground };
         _editorTab.Controls.Add(_editor);
-        _tabs.TabPages.Add(_ribbonTab);
         _tabs.TabPages.Add(_editorTab);
+        _tabs.TabPages.Add(_ribbonTab);
     }
 
     private void BuildStatusBar()
     {
         _statusStrip = new StatusStrip
         {
-            BackColor = Color.White,
+            BackColor = Theme.Surface,
             ForeColor = Theme.SecondaryText,
             Font = Theme.UiFont(9), SizingGrip = false,
             Padding = new Padding(16, 3, 16, 3)
@@ -328,32 +351,37 @@ public class MainForm : BrandForm
         _newItem.Text = L10n.T("File.NewProject");
         _openItem.Text = L10n.T("File.OpenProject");
         _saveItem.Text = L10n.T("File.SaveProject");
+        _saveAsItem.Text = L10n.T("Toolbar.SaveAs") + "…";
         _importCsvItem.Text = L10n.T("File.ImportCsv");
         _openWstxItem.Text = L10n.T("File.OpenWstx");
         _saveWstxItem.Text = L10n.T("File.SaveAsWstx");
-        _printSettingsItem.Text = L10n.T("File.PrintSettings");
-        _printItem.Text = L10n.T("Toolbar.Print");
+        _pageSettingsItem.Text = L10n.T("Toolbar.PageSetup") + "…";
+        _printSettingsItem.Text = L10n.T("File.PrintSettings") + "…";
+        _previewItem.Text = L10n.T("Toolbar.Preview") + "…";
+        _printItem.Text = L10n.T("Toolbar.Print") + "…";
         _unitsMmItem.Text = L10n.T("View.UnitsMm");
         _unitsInchItem.Text = L10n.T("View.UnitsInch");
         _ribbonTab.Text = L10n.T("Tab.Ribbon");
         _editorTab.Text = L10n.T("Tab.Editor");
-        SetToolLabel(_tbNew, "Toolbar.NewProject");
-        SetToolLabel(_tbOpen, "Toolbar.Open");
-        SetToolLabel(_tbSave, "Toolbar.Save");
-        SetToolLabel(_tbSaveAs, "Toolbar.SaveAs");
-        SetToolLabel(_tbPageSetup, "Toolbar.PageSetup");
-        SetToolLabel(_tbPrintSettings, "Toolbar.PrintSettings");
-        SetToolLabel(_tbPreview, "Toolbar.Preview");
-        SetToolLabel(_tbPrint, "Toolbar.Print");
-        _tbSave.Text = "  " + L10n.T("Toolbar.Save");
-        _tbPreview.Text = "  " + L10n.T("Toolbar.Preview");
+        SetToolLabel(_tbNew, "File.NewProject", "Ctrl+N");
+        SetToolLabel(_tbOpen, "File.OpenProject", "Ctrl+O");
+        SetToolLabel(_tbSave, "Toolbar.Save", "Ctrl+S");
+        SetToolLabel(_tbImport, "File.ImportCsv");
+        SetToolLabel(_tbSettings, "Toolbar.Settings");
+        SetToolLabel(_tbPreview, "Toolbar.Preview", "Ctrl+Shift+P");
+        SetToolLabel(_tbPrint, "Toolbar.Print", "Ctrl+P");
+        _tbSettings.DropDownItems[0].Text = _pageSettingsItem.Text;
+        _tbSettings.DropDownItems[1].Text = _printSettingsItem.Text;
         _welcome.ApplyStrings();
         _editor.ApplyStrings();
         _exitItem.Text = L10n.T("File.Exit");
         _numberColumn.Text = L10n.T("Ribbon.Number");
         _nameColumn.Text = L10n.T("Ribbon.Name");
-        _recordEdit.Text = L10n.T("Ribbon.EditRecord"); _recordCopy.Text = L10n.T("Ribbon.CopyRecord");
-        _recordDelete.Text = L10n.T("Ribbon.DeleteRecord"); _recordUp.Text = L10n.T("Ribbon.Up"); _recordDown.Text = L10n.T("Ribbon.Down");
+        _ribbonList.AccessibleName = _ribbonTab.Text;
+        _recordCopy.Text = L10n.T("Ribbon.CopyRecord");
+        _recordDelete.Text = L10n.T("Ribbon.DeleteRecord");
+        _recordUp.Text = L10n.T("Ribbon.Up");
+        _recordDown.Text = L10n.T("Ribbon.Down");
 
         foreach (var (code, item) in _languageItems)
         {
@@ -362,10 +390,10 @@ public class MainForm : BrandForm
         }
     }
 
-    private void SetToolLabel(Button button, string key)
+    private static void SetToolLabel(ToolStripItem item, string key, string? shortcut = null)
     {
-        button.AccessibleName = L10n.T(key);
-        _toolTips.SetToolTip(button, button.AccessibleName);
+        item.Text = item.AccessibleName = L10n.T(key);
+        item.ToolTipText = shortcut is null ? item.Text : $"{item.Text} ({shortcut})";
     }
 
     // ---------------- ЖИЗНЕННЫЙ ЦИКЛ ПРОЕКТА ----------------
@@ -375,31 +403,37 @@ public class MainForm : BrandForm
         if (!ConfirmDiscard())
             return;
 
-        // Шаг 1: имя и критерий — по типу этикетки или по типу клеммы
         using var first = new NewProjectDialog();
-        if (first.ShowDialog(this) != DialogResult.OK)
+        while (first.ShowDialog(this) == DialogResult.OK)
+        {
+            var cleatMode = first.Mode == NewProjectMode.Cleat;
+            using var second = new TypeSelectionDialog(cleatMode);
+            ProjectFile? project = null;
+            while (second.ShowDialog(this) == DialogResult.OK)
+            {
+                if (!cleatMode)
+                {
+                    project = CreateLabelProject(first.ProjectName, second.SelectedLabelType);
+                    break;
+                }
+                if (second.SelectedCleat is not { } cleat) return;
+                using var dimensions = new MarkerSizeDialog(cleat.DisplayName);
+                var result = dimensions.ShowDialog(this);
+                if (result == DialogResult.Retry) continue;
+                if (result == DialogResult.OK) project = CreateCleatProject(first.ProjectName, cleat, dimensions);
+                break;
+            }
+            if (second.DialogResult == DialogResult.Retry) continue;
+            if (project is null) return;
+
+            ClearRecovery();
+            _project = project;
+            _projectPath = null;
+            _dirty = true;
+            LoadEditorFromProject();
+            RefreshProjectUi();
             return;
-
-        var name = first.ProjectName;
-        var mode = first.Mode;
-
-        // Шаг 2: список соответствующих типов, справа — изображение выбранного
-        using var second = new TypeSelectionDialog(mode == NewProjectMode.Cleat);
-        if (second.ShowDialog(this) != DialogResult.OK)
-            return;
-
-        var project = mode == NewProjectMode.Cleat
-            ? CreateCleatProject(name, second.SelectedCleat)
-            : CreateLabelProject(name, second.SelectedLabelType);
-        if (project is null)
-            return;
-
-        ClearRecovery();
-        _project = project;
-        _projectPath = null;
-        _dirty = true;
-        LoadEditorFromProject();
-        RefreshProjectUi();
+        }
     }
 
     /// <summary>
@@ -414,12 +448,8 @@ public class MainForm : BrandForm
         return BuildProject(name, type.Name, type.Geometry.Clone());
     }
 
-    /// <summary>Проект по типу клеммы: имя — «MTP 1.5», базовая геометрия, 10 этикеток.</summary>
-    private ProjectFile? CreateCleatProject(string name, CleatType? cleat)
+    private static ProjectFile CreateCleatProject(string name, CleatType cleat, MarkerSizeDialog dimensions)
     {
-        if (cleat is null) return null;
-        using var dimensions = new MarkerSizeDialog(cleat.DisplayName);
-        if (dimensions.ShowDialog(this) != DialogResult.OK) return null;
         var geometry = new LabelGeometry { LabelsInRow = 1, WidthUm = dimensions.WidthUm, HeightUm = dimensions.HeightUm };
         return BuildProject(name, cleat.DisplayName, geometry);
     }
@@ -720,6 +750,7 @@ public class MainForm : BrandForm
         _editor.LoadLayout(_project.Ribbon.GetLayout(),
             _project.Ribbon.LabelTypeName ?? "Custom label", _project.Print);
         _tabs.SelectedTab = _editorTab;
+        if (_tabs.Visible) _editor.FocusCanvas();
     }
 
     /// <summary>Редактор изменил макет — синхронизируем с проектом и помечаем как изменённый.</summary>
@@ -752,7 +783,7 @@ public class MainForm : BrandForm
         }
         catch (Exception ex) when (ex is InvalidPrinterException or System.ComponentModel.Win32Exception) { }
         using var dialog = new PreviewDialog(pages, _project.Print, dpiX, dpiY);
-        dialog.ShowDialog(this);
+        if (dialog.ShowDialog(this) == DialogResult.Yes) PrintProject();
     }
 
     /// <summary>Смена единиц отображения (внутри всегда мкм).</summary>
@@ -895,11 +926,15 @@ public class MainForm : BrandForm
     /// <summary>Перерисовывает заголовок, список ленты и статус-бар.</summary>
     private void RefreshProjectUi()
     {
-        Text = _project is null ? AppTitle : $"{AppTitle} - {_project.Name}";
-        _welcome.Visible = _project is null;
-        _toolbar.Visible = _tabs.Visible = _project is not null;
-        _saveItem.Enabled = _saveWstxItem.Enabled = _importCsvItem.Enabled = _printItem.Enabled = _project is not null;
+        var hasProject = _project is not null;
+        var enteringWorkspace = hasProject && !_tabs.Visible;
+        Text = _project is null ? AppTitle : $"{_project.Name}{(_dirty ? " *" : "")} — {AppTitle}";
+        _welcome.Visible = !hasProject;
+        _toolbar.Visible = _tabs.Visible = _statusStrip.Visible = hasProject;
+        _saveItem.Enabled = _saveAsItem.Enabled = _saveWstxItem.Enabled = _importCsvItem.Enabled =
+            _pageSettingsItem.Enabled = _printSettingsItem.Enabled = _previewItem.Enabled = _printItem.Enabled = hasProject;
 
+        var previousRecord = SelectedRecord();
         _ribbonList.BeginUpdate();
         _ribbonList.Items.Clear();
         if (_project is not null)
@@ -907,41 +942,87 @@ public class MainForm : BrandForm
             _ribbonList.Items.Add(new ListViewItem(new[] { "1", L10n.T("Ribbon.CurrentLayout") }));
             foreach (var label in _project.Ribbon.Labels.Where(item => LabelPrintPages.CountImported(_editor.Layout, new[] { item }) > 0))
             {
-                var item = new ListViewItem(new[] { (_ribbonList.Items.Count + 1).ToString(), label.Name }) { Tag = label };
-                if (_ribbonList.Items.Count % 2 == 1) item.BackColor = Theme.LightBackground;
+                var item = new ListViewItem(new[] { (_ribbonList.Items.Count + 1).ToString(), label.Name })
+                {
+                    Tag = label, ToolTipText = label.Name
+                };
+                if (!SystemInformation.HighContrast && _ribbonList.Items.Count % 2 == 1)
+                    item.BackColor = Theme.LightBackground;
                 _ribbonList.Items.Add(item);
             }
+            SelectRecord(previousRecord);
         }
         _ribbonList.EndUpdate();
+        FitRibbonColumns();
+        UpdateRecordActions();
+        _ribbonHint.Visible = _ribbonList.Items.Count == 1;
+        _ribbonHint.Text = L10n.T(HasVariableFields() ? "Ribbon.NoRecords" : "Ribbon.NoFields");
 
-        _statusLeft.Text = _project is null
-            ? L10n.T("Status.NoProject")
-            : string.Format(L10n.T("Status.Project"), _project.Name, 1 + LabelPrintPages.CountImported(_editor.Layout, _project.Ribbon.Labels));
-        _statusRight.ForeColor = _dirty ? Color.FromArgb(105, 72, 0) : Theme.SecondaryText;
-        _statusRight.BackColor = _dirty ? Theme.SoftYellow : Color.White;
+        _statusLeft.Text = string.Format(L10n.T("Status.Records"), _ribbonList.Items.Count);
+        var flagUnsaved = _dirty && !SystemInformation.HighContrast;
+        _statusRight.ForeColor = flagUnsaved ? Color.FromArgb(105, 72, 0) : Theme.SecondaryText;
+        _statusRight.BackColor = flagUnsaved ? Theme.SoftYellow : Theme.Surface;
         _statusRight.Padding = new Padding(8, 1, 8, 1);
-        _statusRight.Text = _project is null
-            ? string.Empty
-            : (_dirty ? L10n.T("Status.Unsaved") : L10n.T("Status.Saved"));
+        _statusRight.Text = L10n.T(_dirty ? "Status.Unsaved" : "Status.Saved");
+        if (enteringWorkspace) _editor.FocusCanvas();
+    }
+
+    private void FitRibbonColumns()
+    {
+        if (_nameColumn is null) return;
+        _numberColumn.Width = LogicalToDeviceUnits(64);
+        _nameColumn.Width = Math.Max(LogicalToDeviceUnits(100),
+            _ribbonList.ClientSize.Width - _numberColumn.Width - SystemInformation.VerticalScrollBarWidth);
+    }
+
+    private bool HasVariableFields()
+        => _project is not null && LabelPrintPages.GetBindings(_editor.Layout).Any(content => content.Type != CellContentType.Image);
+
+    private void UpdateRecordActions()
+    {
+        var index = _ribbonList.SelectedIndices.Count == 0 ? -1 : _ribbonList.SelectedIndices[0];
+        _recordEdit.Enabled = index >= 0;
+        _recordEdit.Text = L10n.T(index == 0 ? "Ribbon.EditLayout" : "Ribbon.EditRecord");
+        _recordCopy.Enabled = index > 0 || (index == 0 && HasVariableFields());
+        _recordDelete.Enabled = index > 0;
+        _recordUp.Enabled = index > 1;
+        _recordDown.Enabled = index > 0 && index < _ribbonList.Items.Count - 1;
+    }
+
+    private void OnRibbonKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.Enter && _recordEdit.Enabled) EditRecord();
+        else if (e.KeyCode == Keys.Delete && _recordDelete.Enabled) DeleteRecord();
+        else return;
+        e.SuppressKeyPress = true;
     }
 
     private LabelItem? SelectedRecord() => _ribbonList.SelectedItems.Count == 0 ? null : _ribbonList.SelectedItems[0].Tag as LabelItem;
     private void SelectRecord(LabelItem? record)
     {
-        RefreshProjectUi();
-        var item = _ribbonList.Items.Cast<ListViewItem>().FirstOrDefault(x => ReferenceEquals(x.Tag, record));
-        if (item is not null) { item.Selected = true; item.EnsureVisible(); }
+        if (_ribbonList.Items.Count == 0) return;
+        var item = _ribbonList.Items.Cast<ListViewItem>().FirstOrDefault(x => ReferenceEquals(x.Tag, record)) ?? _ribbonList.Items[0];
+        if (_ribbonList.SelectedItems.Count == 1 && _ribbonList.SelectedItems[0] != item)
+            _ribbonList.SelectedItems[0].Selected = false;
+        item.Selected = item.Focused = true;
+        if (_tabs.SelectedTab == _ribbonTab) item.EnsureVisible();
     }
     private static string RecordName(Dictionary<string, string> fields) => string.Join(" | ", fields.Values.Take(3));
     private void EditRecord()
     {
-        if (_project is null) return;
+        if (_project is null || _ribbonList.SelectedIndices.Count == 0) return;
         var record = SelectedRecord();
-        if (record is null) { _tabs.SelectedTab = _editorTab; return; }
+        if (record is null)
+        {
+            _tabs.SelectedTab = _editorTab;
+            _editor.FocusCanvas();
+            return;
+        }
         using var dialog = new RibbonRecordDialog(_editor.Layout, record.Fields);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         record.Fields = dialog.Result; record.Name = RecordName(record.Fields);
-        _dirty = true; SelectRecord(record);
+        _dirty = true;
+        RefreshProjectUi();
     }
     private void CopyRecord()
     {
@@ -955,7 +1036,9 @@ public class MainForm : BrandForm
         var copy = new LabelItem { Fields = fields, Name = RecordName(fields) };
         var position = selected is null ? 0 : _project.Ribbon.Labels.IndexOf(selected) + 1;
         _project.Ribbon.Labels.Insert(position, copy);
-        _dirty = true; SelectRecord(copy);
+        _dirty = true;
+        RefreshProjectUi();
+        SelectRecord(copy);
     }
     private void DeleteRecord()
     {
@@ -963,7 +1046,11 @@ public class MainForm : BrandForm
         if (_project is null || record is null) return;
         if (BrandMessageBox.Show(this, L10n.T("Ribbon.ConfirmDelete"), AppTitle,
             MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        _project.Ribbon.Labels.Remove(record); _dirty = true; SelectRecord(null);
+        var index = _ribbonList.SelectedIndices[0];
+        _project.Ribbon.Labels.Remove(record);
+        _dirty = true;
+        RefreshProjectUi();
+        SelectRecord(_ribbonList.Items[Math.Min(index, _ribbonList.Items.Count - 1)].Tag as LabelItem);
     }
     private void MoveRecord(int direction)
     {
@@ -973,7 +1060,8 @@ public class MainForm : BrandForm
         if (record is null || otherIndex <= 0 || otherIndex >= _ribbonList.Items.Count || _ribbonList.Items[otherIndex].Tag is not LabelItem other) return;
         var from = _project.Ribbon.Labels.IndexOf(record); var to = _project.Ribbon.Labels.IndexOf(other);
         (_project.Ribbon.Labels[from], _project.Ribbon.Labels[to]) = (_project.Ribbon.Labels[to], _project.Ribbon.Labels[from]);
-        _dirty = true; SelectRecord(record);
+        _dirty = true;
+        RefreshProjectUi();
     }
 
     private void OnLanguageItemClick(object? sender, EventArgs e)
@@ -1002,8 +1090,8 @@ public class MainForm : BrandForm
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
         {
             const int captionColor = 35, textColor = 36;
-            int black = 0x000000, white = 0xFFFFFF;
-            DwmSetWindowAttribute(Handle, captionColor, ref black, sizeof(int));
+            int ink = ColorTranslator.ToWin32(Theme.ProjectBar), white = ColorTranslator.ToWin32(Color.White);
+            DwmSetWindowAttribute(Handle, captionColor, ref ink, sizeof(int));
             DwmSetWindowAttribute(Handle, textColor, ref white, sizeof(int));
         }
     }
@@ -1014,6 +1102,7 @@ public class MainForm : BrandForm
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
+        _rowHeight.ImageSize = new Size(1, LogicalToDeviceUnits(32));
         var area = Screen.FromControl(this).WorkingArea;
         MinimumSize = new Size(Math.Min(MinimumSize.Width, area.Width), Math.Min(MinimumSize.Height, area.Height));
         Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
@@ -1027,7 +1116,6 @@ public class MainForm : BrandForm
             L10n.Changed -= OnLanguageChanged;
             _recoveryTimer.Dispose();
             _recovery?.Dispose();
-            _toolTips.Dispose();
             _rowHeight.Dispose();
             _printDocument?.Dispose();
         }

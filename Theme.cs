@@ -6,19 +6,22 @@ namespace MeyertecPrint;
 public static class Theme
 {
     public static readonly Color Dark = Color.FromArgb(15, 32, 42);
-    public static readonly Color ProjectBar = Color.Black;
+    public static readonly Color ProjectBar = Dark;
     public static readonly Color Yellow = Color.FromArgb(255, 203, 4);
     public static readonly Color LightBackground = Color.FromArgb(245, 247, 247);
-    public static readonly Color RailSurface = Color.FromArgb(249, 250, 250);
-    public static readonly Color RailSelection = Color.FromArgb(221, 227, 230);
-    public static readonly Color RailSelectionBorder = Color.FromArgb(161, 173, 180);
-    public static readonly Color Canvas = Color.FromArgb(234, 239, 240);
-    public static readonly Color SecondaryText = Color.FromArgb(78, 97, 105);
-    public static readonly Color Border = Color.FromArgb(207, 217, 219);
+    public static readonly Color RailSurface = Color.FromArgb(247, 249, 250);
+    public static readonly Color RailSelection = Color.FromArgb(255, 244, 198);
+    public static readonly Color RailSelectionBorder = Color.FromArgb(161, 111, 0);
+    public static readonly Color Canvas = Color.FromArgb(231, 237, 240);
+    public static readonly Color Border = Color.FromArgb(209, 219, 224);
     public static readonly Color Hover = Color.FromArgb(231, 237, 238);
     public static readonly Color SoftYellow = Color.FromArgb(255, 242, 188);
+    public static Color Surface => SystemInformation.HighContrast ? SystemColors.Window : Color.White;
+    public static Color Text => SystemInformation.HighContrast ? SystemColors.WindowText : Dark;
+    public static Color SecondaryText => SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(72, 90, 101);
+    public static Color ErrorText => SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(151, 31, 32);
 
-    // Keep the original document font fallback as well as the UI font.
+    // The document font fallback follows the installed faces independently of the interface font.
     private static readonly Lazy<string> FontFamilyName = new(() =>
     {
         try
@@ -34,50 +37,76 @@ public static class Theme
     });
 
     public static string FontName => FontFamilyName.Value;
-    public static Font UiFont(float sizePt = 9f, FontStyle style = FontStyle.Regular)
-        => new(FontName, sizePt, style, GraphicsUnit.Point);
+    public static Font UiFont(float sizePt = 10f, FontStyle style = FontStyle.Regular)
+        => new(SystemFonts.MessageBoxFont?.Name ?? "Segoe UI", sizePt, style, GraphicsUnit.Point);
 
-    public static void StyleButton(Button button, bool primary = false)
+    public static void StyleButton(ButtonBase button, bool primary = false)
     {
+        if (SystemInformation.HighContrast)
+        {
+            button.FlatStyle = FlatStyle.Standard;
+            button.UseVisualStyleBackColor = true;
+            return;
+        }
         button.FlatStyle = FlatStyle.Flat;
         button.UseVisualStyleBackColor = false;
-        button.BackColor = primary ? Yellow : Color.White;
-        button.ForeColor = Dark;
-        button.FlatAppearance.BorderSize = primary ? 0 : 1;
-        button.FlatAppearance.BorderColor = Border;
+        button.FlatAppearance.BorderSize = 1;
         button.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(255, 217, 67) : Hover;
         button.FlatAppearance.MouseDownBackColor = primary ? Color.FromArgb(239, 184, 0) : Border;
-        button.Cursor = Cursors.Hand;
+        void ApplyColors()
+        {
+            button.BackColor = button.Enabled ? (primary ? Yellow : Color.White) : LightBackground;
+            button.ForeColor = button.Enabled ? Dark : SecondaryText;
+            button.FlatAppearance.BorderColor = primary && button.Enabled ? RailSelectionBorder : Border;
+        }
+        button.EnabledChanged += (_, _) => ApplyColors();
+        ApplyColors();
     }
 
-    public static FlowLayoutPanel DialogFooter(Button primary, Button? cancel = null)
+    public static FlowLayoutPanel DialogFooter(Button primary, Button? cancel = null, Button? back = null)
     {
         var bar = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom, Height = 60, Padding = new Padding(16, 12, 16, 12),
-            FlowDirection = FlowDirection.RightToLeft, WrapContents = false, BackColor = Color.White
+            FlowDirection = FlowDirection.RightToLeft, WrapContents = false, BackColor = Surface
         };
         bar.Paint += (_, e) =>
         {
             using var pen = new Pen(Border);
             e.Graphics.DrawLine(pen, 0, 0, bar.ClientSize.Width, 0);
         };
-        foreach (var button in new[] { primary, cancel })
+        foreach (var button in new[] { cancel, primary, back })
         {
             if (button is null) continue;
             StyleButton(button, button == primary);
-            button.Size = new Size(110, 34);
+            button.AutoSize = true;
+            button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            button.MinimumSize = new Size(92, 34);
+            button.Padding = new Padding(10, 0, 10, 0);
             button.Margin = new Padding(8, 0, 0, 0);
+            button.TabIndex = button == back ? 0 : button == primary ? 1 : 2;
             bar.Controls.Add(button);
         }
         return bar;
     }
 
-    // Assets are shared by tool buttons and menu items for the life of the process.
-    private static readonly Dictionary<(string, int), Bitmap> Icons = new();
-    public static Bitmap Icon(string name, int size)
+    public static void FitDialogToScreen(Form form)
     {
-        if (Icons.TryGetValue((name, size), out var image)) return image;
+        var area = Screen.FromControl(form.Owner ?? form).WorkingArea;
+        form.MinimumSize = new Size(Math.Min(form.MinimumSize.Width, area.Width),
+            Math.Min(form.MinimumSize.Height, area.Height));
+        var width = Math.Min(form.Width, area.Width);
+        var height = Math.Min(form.Height, area.Height);
+        form.Bounds = new Rectangle(Math.Clamp(form.Left, area.Left, area.Right - width),
+            Math.Clamp(form.Top, area.Top, area.Bottom - height), width, height);
+    }
+
+    // Assets are shared by tool buttons and menu items for the life of the process.
+    private static readonly Dictionary<(string, int, Color?), Bitmap> Icons = new();
+    public static Bitmap Icon(string name, int size, Color? foreground = null)
+    {
+        var key = (name, size, foreground);
+        if (Icons.TryGetValue(key, out var image)) return image;
         using var original = new Bitmap(Path.Combine(AppContext.BaseDirectory, "IconsUI", name + ".png"));
         image = new Bitmap(size, size);
         using var g = Graphics.FromImage(image);
@@ -85,9 +114,19 @@ public static class Theme
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         using var edges = new System.Drawing.Imaging.ImageAttributes();
         edges.SetWrapMode(WrapMode.TileFlipXY);
+        if (foreground is { } tint)
+        {
+            edges.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix([
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 1, 0],
+                [tint.R / 255f, tint.G / 255f, tint.B / 255f, 0, 1]
+            ]));
+        }
         g.DrawImage(original, new Rectangle(0, 0, size, size), 0, 0, original.Width, original.Height,
             GraphicsUnit.Pixel, edges);
-        Icons[(name, size)] = image;
+        Icons[key] = image;
         return image;
     }
 
@@ -97,6 +136,39 @@ public static class Theme
         for (var y = bounds.Top - bounds.Top % step; y < bounds.Bottom; y += step)
             for (var x = bounds.Left - bounds.Left % step; x < bounds.Right; x += step)
                 g.FillRectangle(brush, x, y, 1.5f, 1.5f);
+    }
+}
+
+internal sealed class BrandCommandRenderer(ToolStripItem primary) : ToolStripProfessionalRenderer(new BrandColorTable())
+{
+    protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        => e.Graphics.Clear(Theme.Surface);
+
+    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+    {
+        if (e.ToolStrip is ToolStripDropDown)
+        {
+            base.OnRenderToolStripBorder(e);
+            return;
+        }
+        using var pen = new Pen(Theme.Border);
+        e.Graphics.DrawLine(pen, 0, e.AffectedBounds.Bottom - 1, e.AffectedBounds.Right, e.AffectedBounds.Bottom - 1);
+    }
+
+    protected override void OnRenderButtonBackground(ToolStripItemRenderEventArgs e)
+    {
+        if (e.Item != primary)
+        {
+            base.OnRenderButtonBackground(e);
+            return;
+        }
+
+        var fill = e.Item.Pressed ? Color.FromArgb(239, 184, 0)
+            : e.Item.Selected ? Color.FromArgb(255, 221, 86) : Theme.Yellow;
+        using var brush = new SolidBrush(fill);
+        using var border = new Pen(e.Item.Selected ? Theme.Dark : Theme.RailSelectionBorder);
+        e.Graphics.FillRectangle(brush, 0, 0, e.Item.Width - 1, e.Item.Height - 1);
+        e.Graphics.DrawRectangle(border, 0, 0, e.Item.Width - 1, e.Item.Height - 1);
     }
 }
 

@@ -10,7 +10,7 @@ public class BrandForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return;
+        if (SystemInformation.HighContrast || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return;
         try
         {
             var dark = 1;

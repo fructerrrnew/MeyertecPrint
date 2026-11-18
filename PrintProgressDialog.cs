@@ -19,21 +19,26 @@ public sealed class PrintProgressDialog : BrandForm
 
     public PrintProgressDialog(IReadOnlyList<LabelLayout> pages, int from, int to, PrintSettings settings, PrinterPlugin? plugin)
     {
+        SuspendLayout();
         _pages = pages; _start = from - 1; _count = to - from + 1; _settings = settings; _plugin = plugin;
         Text = L10n.T("Print.ProgressTitle"); StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog; MinimizeBox = MaximizeBox = false;
-        ClientSize = new Size(550, 205); Font = Theme.UiFont(); BackColor = Color.White;
+        AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(550, 214); Font = Theme.UiFont(); BackColor = Theme.Surface;
         _status.Text = L10n.T("Print.Preparing");
+        _progress.AccessibleName = Text;
         var warning = new Label { Dock = DockStyle.Fill, Padding = new Padding(15), ForeColor = Theme.SecondaryText,
             Text = L10n.T("Print.CancelWarning") };
         _cancelButton.Text = L10n.T("Dialog.Cancel"); _cancelButton.Click += (_, _) => RequestCancel();
         Controls.Add(warning); Controls.Add(_progress); Controls.Add(_status); Controls.Add(Theme.DialogFooter(_cancelButton));
+        CancelButton = _cancelButton;
         Shown += (_, _) =>
         {
             var thread = new Thread(Work) { IsBackground = true, Name = "MeyertecPrint job" };
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
         };
+        ResumeLayout();
     }
     private void RequestCancel()
     {

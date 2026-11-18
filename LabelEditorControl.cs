@@ -2,7 +2,7 @@ using System.Drawing.Text;
 
 namespace MeyertecPrint;
 
-/// <summary>Инструменты редактора (левая боковая панель, как в Photoshop).</summary>
+/// <summary>Инструменты редактора макета.</summary>
 public enum EditorTool
 {
     Select,
@@ -14,15 +14,10 @@ public enum EditorTool
     SplitRows,
 }
 
-/// <summary>
-/// Редактор полосы этикетки в стиле Photoshop:
-/// левая боковая панель инструментов (V — выделение, T — текст, Q — QR,
-/// I — изображение, B — штрихкод, разбиение), верхняя контекстная панель
-/// (для текста: шрифт / размер / жирный; для остальных — подсказка),
-/// панель свойств с геометрией (мм на экране / мкм внутри) и холст с ячейками.
-/// </summary>
+/// <summary>Холст этикетки, инструменты и параметры макета.</summary>
 public partial class LabelEditorControl : UserControl
 {
+    private const int ToolRailWidth = 166;
     private LabelLayout _layout = new();
     private string _typeName = "Custom label";
     private int? _selectedRow;
@@ -44,16 +39,27 @@ public partial class LabelEditorControl : UserControl
     private readonly ToolTip _tips = new();
     private readonly Dictionary<Control, string> _captions = new();
     private readonly Dictionary<Control, string> _toolKeys = new();
-    private readonly FlowLayoutPanel _contextBar;
+    private readonly Dictionary<Control, string> _fieldKeys = new();
+    private readonly ColumnStyle _railColumn;
+    private readonly Label _toolHeading;
+    private readonly Label _cellHeading;
+    private readonly TabControl _inspector;
+    private readonly TabPage _geometryTab;
+    private readonly TabPage _objectTab;
+    private bool _compactTools;
+    private readonly Panel _contextBar;
     private readonly FlowLayoutPanel _textOptions;
+    private bool _showTextOptions;
     private readonly Label _contextHint;
     private readonly ComboBox _fontBox;
+    private string? _unavailableFont;
     private readonly NumericUpDown _fontSizeBox;
-    private readonly Button _boldButton;
+    private readonly CheckBox _boldButton;
     private readonly Label _unitLabel;
     private readonly Panel _canvasPanel;
     private readonly TextBox _inlineBox;
     private readonly CanvasPanel _canvas;
+    private string? SelectedFontName => _fontBox.SelectedIndex > 0 ? _fontBox.SelectedItem as string : null;
 
     private readonly NumericUpDown _inRowBox;
     private readonly NumericUpDown _topBox;
@@ -78,25 +84,42 @@ public partial class LabelEditorControl : UserControl
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
 
         Font = Theme.UiFont();
-        _canvas = new CanvasPanel { TabStop = true };
-        var header = new Panel
+        _canvas = new CanvasPanel { TabStop = true, AccessibleRole = AccessibleRole.Pane };
+        var header = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Color.White,
-            Padding = new Padding(12, 7, 12, 7)
+            Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 1), BackColor = Theme.Surface,
+            Padding = new Padding(10, 8, 10, 8), ColumnCount = 2, RowCount = 1, TabIndex = 0
         };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         _typeButton = MakeIconButton("Label", "TypeDlg.Title", OpenTypeDialog);
         _typeButton.AutoEllipsis = true;
-        _typeButton.Dock = DockStyle.Left;
-        _typeButton.Width = 260;
+        _typeButton.Dock = DockStyle.Fill;
+        _typeButton.MaximumSize = new Size(254, 0);
         _typeButton.Font = Theme.UiFont(11, FontStyle.Bold);
         _typeButton.TextAlign = ContentAlignment.MiddleLeft;
         _typeButton.ImageAlign = ContentAlignment.MiddleLeft;
-        _typeButton.Padding = new Padding(8, 0, 0, 0);
+        _typeButton.Padding = new Padding(7, 0, 23, 0);
         _typeButton.TextImageRelation = TextImageRelation.ImageBeforeText;
+        _typeButton.UseMnemonic = false;
+        _typeButton.Margin = new Padding(0, 0, 12, 0);
+        _typeButton.TabIndex = 0;
+        if (!SystemInformation.HighContrast)
+        {
+            _typeButton.FlatAppearance.BorderSize = 1;
+            _typeButton.Paint += (_, e) =>
+            {
+                var x = _typeButton.Width - LogicalToDeviceUnits(15);
+                var y = _typeButton.Height / 2;
+                var offset = LogicalToDeviceUnits(4);
+                using var pen = new Pen(Theme.SecondaryText, LogicalToDeviceUnits(1));
+                e.Graphics.DrawLines(pen, [new Point(x - offset, y - 2), new Point(x, y + 2), new Point(x + offset, y - 2)]);
+            };
+        }
         var history = new FlowLayoutPanel
         {
-            Dock = DockStyle.Right, AutoSize = true, WrapContents = false,
-            Margin = Padding.Empty, BackColor = Color.White
+            Dock = DockStyle.Fill, AutoSize = true, WrapContents = false,
+            Margin = Padding.Empty, BackColor = Theme.Surface, TabIndex = 1
         };
         _undoButton = MakeIconButton("Undo", "Editor.Undo", DoUndo);
         _redoButton = MakeIconButton("Redo", "Editor.Redo", DoRedo);
@@ -104,48 +127,54 @@ public partial class LabelEditorControl : UserControl
         history.Controls.Add(_undoButton);
         history.Controls.Add(_redoButton);
         history.Controls.Add(MakeIconButton("Info", "Editor.Info", ShowInfo));
-        header.Controls.Add(_typeButton);
-        header.Controls.Add(history);
+        header.Controls.Add(_typeButton, 0, 0);
+        header.Controls.Add(history, 1, 0);
 
-        var tools = new FlowLayoutPanel
+        var railSurface = SystemInformation.HighContrast ? Theme.Surface : Theme.RailSurface;
+        var toolPane = new Panel
         {
-            Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, AutoScroll = true,
-            WrapContents = false, BackColor = Theme.RailSurface, Margin = Padding.Empty,
-            Padding = new Padding(6, 6, 6, 6)
+            Dock = DockStyle.Fill, AutoScroll = true, BackColor = railSurface, TabIndex = 1,
+            Margin = new Padding(0, 0, 1, 0)
         };
+        var tools = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, Padding = new Padding(7, 7, 7, 8), BackColor = railSurface
+        };
+        _toolHeading = ToolHeading("Editor.Tools");
+        _cellHeading = ToolHeading("Editor.Cells");
+        tools.Controls.Add(_toolHeading);
         foreach (var tool in Enum.GetValues<EditorTool>())
         {
-            if (tool == EditorTool.SplitColumns)
-            {
-                tools.Controls.Add(new Panel
-                {
-                    Size = new Size(24, 1), Margin = new Padding(6, 6, 6, 6), BackColor = Theme.Border
-                });
-            }
+            if (tool == EditorTool.SplitColumns) tools.Controls.Add(_cellHeading);
             var button = MakeIconButton(tool.ToString(), "Tool." + tool, () =>
             {
                 SetTool(tool);
-                _canvas.Focus();
+                FocusCanvas();
             }, iconSize: 20);
             button.Tag = tool;
-            button.Size = new Size(36, 34);
-            button.Margin = new Padding(0, 1, 0, 1);
+            button.Dock = DockStyle.Fill;
+            button.Height = 32;
+            button.Margin = new Padding(0, 0, 0, 2);
+            button.TextImageRelation = TextImageRelation.ImageBeforeText;
+            button.UseMnemonic = false;
+            button.AutoEllipsis = true;
             tools.Controls.Add(button);
             _toolButtons[tool] = button;
         }
+        toolPane.Controls.Add(tools);
 
-        var inspector = new Panel
+        _inspector = new TabControl
         {
-            Dock = DockStyle.Fill, Margin = Padding.Empty, AutoScroll = true, BackColor = Color.White
+            Dock = DockStyle.Fill, Margin = Padding.Empty, TabIndex = 3,
+            ItemSize = new Size(0, 31), Padding = new Point(10, 5)
         };
-        var geometry = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2, Padding = new Padding(17, 10, 17, 12), BackColor = Color.White
-        };
-        geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 59));
-        geometry.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 41));
-        inspector.Controls.Add(geometry);
+        _geometryTab = new TabPage { AutoScroll = true, BackColor = Theme.Surface };
+        _objectTab = new TabPage { AutoScroll = true, BackColor = Theme.Surface };
+        _inspector.TabPages.Add(_geometryTab);
+        _inspector.TabPages.Add(_objectTab);
+        var geometry = InspectorFields();
+        _geometryTab.Controls.Add(geometry);
         AddSection(geometry, 0, "Inspector.Dimensions");
         _inRowBox = MakeMmBox(isInt: true, min: 1, max: 8, increment: 1m);
         _topBox = MakeMmBox();
@@ -168,7 +197,7 @@ public partial class LabelEditorControl : UserControl
 
         _unitLabel = new Label
         {
-            Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Height = 25,
+            Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Height = 27,
             ForeColor = Theme.SecondaryText, Margin = new Padding(0, 8, 0, 0)
         };
         geometry.Controls.Add(_unitLabel, 0, 10);
@@ -183,29 +212,26 @@ public partial class LabelEditorControl : UserControl
         _gapBetweenBox.ValueChanged += (_, _) => OnGeometryChanged();
         _gapBottomBox.ValueChanged += (_, _) => OnGeometryChanged();
 
-        // ---------- Верхняя контекстная панель (опции активного инструмента) ----------
-        _contextBar = new FlowLayoutPanel
+        _contextBar = new Panel
         {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Height = 44, Margin = Padding.Empty,
-            Padding = new Padding(8, 3, 8, 3),
-            BackColor = Color.White,
+            Dock = DockStyle.Bottom, BackColor = Theme.Surface, Height = 42, Padding = new Padding(0, 1, 0, 0)
+        };
+        _contextBar.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Theme.Border);
+            e.Graphics.DrawLine(pen, 0, 0, _contextBar.Width, 0);
         };
 
         _textOptions = new FlowLayoutPanel
         {
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize = true,
-            Margin = new Padding(0),
+            Dock = DockStyle.Top, WrapContents = true, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin = Padding.Empty, Padding = new Padding(7, 3, 7, 0)
         };
         _fontBox = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 150,
-            Margin = new Padding(2, 6, 6, 0),
+            Width = 124,
+            Margin = new Padding(2, 5, 6, 0),
         };
         PopulateFonts();
         _fontSizeBox = new NumericUpDown
@@ -216,17 +242,14 @@ public partial class LabelEditorControl : UserControl
             Width = 56,
             Margin = new Padding(2, 5, 6, 0),
         };
-        _boldButton = new Button
+        _boldButton = new CheckBox
         {
+            AutoCheck = false, Appearance = Appearance.Button,
             Image = Theme.Icon("Bold", LogicalToDeviceUnits(18)),
-            Size = new Size(30, 26),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.White,
-            Margin = new Padding(2, 5, 6, 0),
+            Size = new Size(31, 27),
+            Margin = new Padding(2, 3, 0, 0)
         };
-        _boldButton.FlatAppearance.BorderColor = Theme.Border;
-        _boldButton.FlatAppearance.MouseOverBackColor = Theme.Yellow;
-        _boldButton.FlatAppearance.MouseDownBackColor = Theme.Yellow;
+        Theme.StyleButton(_boldButton);
         _boldButton.Click += (_, _) =>
         {
             _bold = !_bold;
@@ -241,15 +264,17 @@ public partial class LabelEditorControl : UserControl
         _textOptions.Controls.Add(OptionLabel("TextOpts.Size"));
         _textOptions.Controls.Add(_fontSizeBox);
         _textOptions.Controls.Add(_boldButton);
+        _fieldKeys.Add(_fontBox, "TextOpts.Font");
+        _fieldKeys.Add(_fontSizeBox, "TextOpts.Size");
 
         _contextHint = new Label
         {
-            AutoSize = true,
-            ForeColor = Theme.SecondaryText,
-            Margin = new Padding(10, 10, 0, 0),
+            Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true,
+            ForeColor = Theme.SecondaryText, UseMnemonic = false, Padding = new Padding(11, 0, 10, 0)
         };
-        _contextBar.Controls.Add(_textOptions);
         _contextBar.Controls.Add(_contextHint);
+        _contextBar.Controls.Add(_textOptions);
+        _contextBar.SizeChanged += (_, _) => LayoutContextBar();
 
         // ---------- Холст ----------
         _canvas.Paint += OnCanvasPaint;
@@ -257,6 +282,8 @@ public partial class LabelEditorControl : UserControl
         _canvas.MouseMove += OnObjectMouseMove;
         _canvas.MouseUp += OnObjectMouseUp;
         _canvas.DoubleClick += OnCanvasDoubleClick;
+        _canvas.GotFocus += (_, _) => _canvas.Invalidate();
+        _canvas.LostFocus += (_, _) => _canvas.Invalidate();
         _inlineBox = new TextBox
         {
             Visible = false,
@@ -270,41 +297,43 @@ public partial class LabelEditorControl : UserControl
         _canvasPanel = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Theme.Canvas, Margin = Padding.Empty,
+            BackColor = Theme.Canvas, Margin = Padding.Empty, TabIndex = 0
         };
         _canvasPanel.AutoScroll = true;
         _canvasPanel.Controls.Add(_canvas);
         _canvas.Controls.Add(_inlineBox);
         _canvasPanel.Resize += (_, _) => ResizePhysicalCanvas();
 
-        var work = new TableLayoutPanel
+        var work = new Panel
         {
-            Dock = DockStyle.Fill, Margin = new Padding(1, 0, 1, 0),
-            RowCount = 3, ColumnCount = 1, BackColor = Theme.Border
+            Dock = DockStyle.Fill, Margin = new Padding(0, 0, 1, 0),
+            BackColor = Theme.Border, TabIndex = 2
         };
-        work.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        work.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
-        work.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        work.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-        work.Controls.Add(header, 0, 0);
-        work.Controls.Add(_canvasPanel, 0, 1);
-        work.Controls.Add(_contextBar, 0, 2);
+        work.Controls.Add(_canvasPanel);
+        work.Controls.Add(_contextBar);
 
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Theme.Border
+            Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2,
+            BackColor = SystemInformation.HighContrast ? SystemColors.WindowFrame : Theme.Border
         };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
+        _railColumn = new ColumnStyle(SizeType.Absolute, ToolRailWidth);
+        root.ColumnStyles.Add(_railColumn);
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 264));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 256));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.Controls.Add(tools, 0, 0);
-        root.Controls.Add(work, 1, 0);
-        root.Controls.Add(inspector, 2, 0);
+        root.Controls.Add(header, 0, 0);
+        root.SetColumnSpan(header, 3);
+        root.Controls.Add(toolPane, 0, 1);
+        root.Controls.Add(work, 1, 1);
+        root.Controls.Add(_inspector, 2, 1);
         Controls.Add(root);
-        InitializeObjectEditor(geometry, history);
+        InitializeObjectEditor(history);
         ApplyStrings();
         SetTool(EditorTool.Select);
+        Resize += (_, _) => UpdateToolRail();
+        UpdateToolRail();
     }
 
     // ---------------- ПУБЛИЧНОЕ API ----------------
@@ -321,7 +350,9 @@ public partial class LabelEditorControl : UserControl
         _selectedRow = null;
         _selectedCol = null;
         _undo.Clear();
-        _typeButton.Text = "  " + (typeName == "Custom label" ? L10n.T("Catalog.Custom") : typeName) + "  ▾";
+        _inspector.SelectedTab = _geometryTab;
+        SetTool(EditorTool.Select);
+        UpdateTypeButton();
         UpdateGeometryBoxes();
         UpdateSelectionUi();
         ResizePhysicalCanvas();
@@ -342,9 +373,10 @@ public partial class LabelEditorControl : UserControl
             field.Minimum = (dimension ? 1m : 0m) / unit;
             field.Maximum = (dimension ? 300m : 1000m) / unit;
             field.Increment = inch ? 0.01m : 0.1m;
+            field.DecimalPlaces = inch ? 4 : 3;
         }
         _updating = false;
-        _unitLabel.Text = L10n.T(inch ? "Editor.AllInch" : "Editor.AllMm");
+        UpdateUnitLabels();
         InvalidateCanvas();
         UpdateGeometryBoxes();
         ConfigureObjectUnits();
@@ -378,6 +410,8 @@ public partial class LabelEditorControl : UserControl
     }
 
     public bool HasProject => _layout.Rows.Count > 0;
+
+    internal void FocusCanvas() => _canvas.Focus();
 
     // ---------------- ВЗАИМОДЕЙСТВИЕ ----------------
 
@@ -690,7 +724,7 @@ public partial class LabelEditorControl : UserControl
 
     private void OpenTypeDialog()
     {
-        using var dialog = new LabelTypeDialog();
+        using var dialog = new LabelTypeDialog(_typeName);
         if (dialog.ShowDialog(this.FindForm()) != DialogResult.OK || dialog.SelectedType is null)
             return;
 
@@ -701,9 +735,10 @@ public partial class LabelEditorControl : UserControl
         _undo.Push(_layout.Clone());
         _layout = BuildLayoutFor(type, _layout);
         _typeName = type.Name;
-        _typeButton.Text = "  " + type.DisplayName + "  ▾";
+        UpdateTypeButton();
         SelectCell(null, null);
         UpdateGeometryBoxes();
+        ResizePhysicalCanvas();
         InvalidateCanvas();
         LayoutChanged?.Invoke();
     }
@@ -793,7 +828,7 @@ public partial class LabelEditorControl : UserControl
             Increment = isInt ? 1m : (_unitInch ? 0.01m : increment),
             Width = 86, Anchor = AnchorStyles.Left | AnchorStyles.Right,
             TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle,
-            Margin = new Padding(0, 5, 0, 5),
+            Margin = new Padding(0, 3, 0, 3),
             // Значение ставим последним и в пределах [Minimum, Maximum],
             // иначе NumericUpDown бросает ArgumentOutOfRangeException
             Value = Math.Clamp(isInt ? 1m : 0m, effectiveMin, max),
@@ -802,7 +837,7 @@ public partial class LabelEditorControl : UserControl
 
     private Label Caption(string key)
     {
-        var label = new Label { Text = L10n.T(key), ForeColor = Theme.Dark, UseMnemonic = false };
+        var label = new Label { Text = L10n.T(key), ForeColor = Theme.Text, UseMnemonic = false };
         _captions.Add(label, key);
         return label;
     }
@@ -815,14 +850,36 @@ public partial class LabelEditorControl : UserControl
         return label;
     }
 
+    private Label ToolHeading(string key)
+    {
+        var label = Caption(key);
+        label.AutoSize = true;
+        label.ForeColor = Theme.SecondaryText;
+        label.Font = Theme.UiFont(9, FontStyle.Bold);
+        label.Margin = new Padding(6, 7, 0, 7);
+        return label;
+    }
+
+    private static TableLayoutPanel InspectorFields()
+    {
+        var table = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, Padding = new Padding(13, 8, 13, 12), BackColor = Theme.Surface
+        };
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        return table;
+    }
+
     private void AddSection(TableLayoutPanel panel, int row, string key)
     {
         var label = Caption(key);
         label.Dock = DockStyle.Fill;
-        label.Font = Theme.UiFont(11, FontStyle.Bold);
+        label.Font = Theme.UiFont(10, FontStyle.Bold);
         label.TextAlign = ContentAlignment.MiddleLeft;
         label.Margin = new Padding(0, row == 0 ? 0 : 8, 0, 2);
-        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, row == 0 ? 40 : 46));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, row == 0 ? 32 : 40));
         panel.Controls.Add(label, 0, row);
         panel.SetColumnSpan(label, 2);
     }
@@ -833,9 +890,10 @@ public partial class LabelEditorControl : UserControl
         label.Dock = DockStyle.Fill;
         label.TextAlign = ContentAlignment.MiddleLeft;
         label.Margin = new Padding(0, 0, 4, 0);
-        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 33));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         panel.Controls.Add(label, 0, row);
         panel.Controls.Add(field, 1, row);
+        _fieldKeys.Add(field, key);
     }
 
     private static decimal ClampDecimal(decimal value, decimal min, decimal max)
@@ -848,7 +906,7 @@ public partial class LabelEditorControl : UserControl
             Image = Theme.Icon(icon, LogicalToDeviceUnits(iconSize)), Size = new Size(35, 35), Margin = new Padding(2, 0, 0, 0)
         };
         Theme.StyleButton(button);
-        button.FlatAppearance.BorderSize = 0;
+        if (!SystemInformation.HighContrast) button.FlatAppearance.BorderSize = 0;
         button.Click += (_, _) => action();
         _toolKeys.Add(button, key);
         return button;
@@ -862,13 +920,55 @@ public partial class LabelEditorControl : UserControl
             button.AccessibleName = L10n.T(key);
             _tips.SetToolTip(button, button.AccessibleName);
         }
-        _unitLabel.Text = L10n.T(_unitInch ? "Editor.AllInch" : "Editor.AllMm");
-        _typeButton.Text = "  " + (_typeName == "Custom label" ? L10n.T("Catalog.Custom") : _typeName) + "  ▾";
+        foreach (var (field, key) in _fieldKeys) field.AccessibleName = L10n.T(key);
+        _inspector.AccessibleName = L10n.T("Inspector.Title");
+        _geometryTab.Text = L10n.T("Inspector.Layout");
+        _objectTab.Text = L10n.T("Inspector.Object");
+        _canvas.AccessibleName = L10n.T("Editor.Canvas");
+        _canvas.AccessibleDescription = L10n.T("Editor.CanvasKeys");
+        _updatingTextOpts = true;
+        var fontIndex = _fontBox.SelectedIndex;
+        _fontBox.Items[0] = L10n.T("TextOpts.DefaultFont");
+        _fontBox.SelectedIndex = fontIndex;
+        _updatingTextOpts = false;
+        UpdateUnitLabels();
+        UpdateTypeButton();
+        UpdateToolRail();
+        UpdateToolStates();
         _boldButton.AccessibleName = L10n.T("TextOpts.Bold");
         _tips.SetToolTip(_boldButton, _boldButton.AccessibleName);
         ApplyObjectStrings();
         UpdateContextBar();
         InvalidateCanvas();
+    }
+
+    private void UpdateUnitLabels()
+    {
+        _unitLabel.Text = _objectUnitLabel.Text = L10n.T(_unitInch ? "Editor.AllInch" : "Editor.AllMm");
+    }
+
+    private void UpdateTypeButton()
+    {
+        var type = LabelTypeCatalog.All.FirstOrDefault(item => item.Name == _typeName);
+        var name = type?.Name == LabelTypeCatalog.Stock60x30 ? type.SizeDisplay
+            : type?.DisplayName ?? (_typeName == "Custom label" ? L10n.T("Catalog.Custom") : _typeName);
+        _typeButton.Text = name;
+        _typeButton.AccessibleName = $"{L10n.T("TypeDlg.Title")} · {name}";
+        _tips.SetToolTip(_typeButton, _typeButton.AccessibleName);
+    }
+
+    private void UpdateToolRail()
+    {
+        _compactTools = Width < LogicalToDeviceUnits(760);
+        _railColumn.Width = LogicalToDeviceUnits(_compactTools ? 50 : ToolRailWidth);
+        _toolHeading.Visible = _cellHeading.Visible = !_compactTools;
+        foreach (var (tool, button) in _toolButtons)
+        {
+            button.Text = _compactTools ? string.Empty : L10n.T("ToolLabel." + tool);
+            button.ImageAlign = _compactTools ? ContentAlignment.MiddleCenter : ContentAlignment.MiddleLeft;
+            button.TextAlign = ContentAlignment.MiddleLeft;
+            button.Padding = _compactTools ? Padding.Empty : new Padding(LogicalToDeviceUnits(5), 0, 0, 0);
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -887,28 +987,48 @@ public partial class LabelEditorControl : UserControl
     private void SetTool(EditorTool tool)
     {
         _tool = tool;
+        if (tool != EditorTool.Select && _selectedObject is not null) SelectObject(null);
+        if ((tool is EditorTool.Text or EditorTool.Qr or EditorTool.Image or EditorTool.Barcode) && _selectedRow is not null)
+            SelectCell(null, null);
+        _canvas.Cursor = tool == EditorTool.Select ? Cursors.Default : Cursors.Cross;
+        UpdateToolStates();
+        UpdateContextBar();
+    }
+
+    private void UpdateToolStates()
+    {
         foreach (var (t, button) in _toolButtons)
         {
-            var active = t == tool;
+            var active = t == _tool;
+            button.AccessibleDescription = active ? L10n.T("Editor.ActiveTool") : null;
+            if (SystemInformation.HighContrast)
+            {
+                button.FlatStyle = FlatStyle.Flat;
+                button.UseVisualStyleBackColor = false;
+                button.BackColor = active ? SystemColors.Highlight : SystemColors.Window;
+                button.ForeColor = active ? SystemColors.HighlightText : SystemColors.WindowText;
+                button.FlatAppearance.BorderSize = active ? 1 : 0;
+                button.FlatAppearance.BorderColor = button.ForeColor;
+                button.FlatAppearance.MouseOverBackColor = button.BackColor;
+                button.FlatAppearance.MouseDownBackColor = button.BackColor;
+                button.Image = Theme.Icon(t.ToString(), LogicalToDeviceUnits(20), button.ForeColor);
+                continue;
+            }
             button.BackColor = active ? Theme.RailSelection : Theme.RailSurface;
             button.FlatAppearance.BorderSize = active ? 1 : 0;
             button.FlatAppearance.BorderColor = Theme.RailSelectionBorder;
             button.FlatAppearance.MouseOverBackColor = active ? Theme.RailSelection : Theme.Hover;
             button.FlatAppearance.MouseDownBackColor = Theme.RailSelection;
         }
-        UpdateContextBar();
     }
 
-    /// <summary>
-    /// Верхняя контекстная панель: для инструмента T — группа опций текста,
-    /// для остальных — подсказка, что делать кликом по ячейке.
-    /// </summary>
     private void UpdateContextBar()
     {
-        _textOptions.Visible = HasProject && (_tool == EditorTool.Text || _selectedObject?.Content.Type == CellContentType.Text);
-        _contextHint.Visible = !_textOptions.Visible;
+        _showTextOptions = HasProject && (_tool == EditorTool.Text || _selectedObject?.Content.Type == CellContentType.Text);
+        _textOptions.Visible = _showTextOptions;
         _contextHint.Text = L10n.T(_tool switch
         {
+            EditorTool.Select when _selectedObject is not null => "Hint.Selected",
             EditorTool.Select => "Hint.Select",
             EditorTool.Text => "Hint.Text",
             EditorTool.Qr => "Hint.Qr",
@@ -917,6 +1037,14 @@ public partial class LabelEditorControl : UserControl
             EditorTool.SplitColumns => "Hint.SplitColumns",
             _ => "Hint.SplitRows",
         });
+        LayoutContextBar();
+    }
+
+    private void LayoutContextBar()
+    {
+        var optionsHeight = _showTextOptions && _contextBar.Width > 0
+            ? _textOptions.GetPreferredSize(new Size(_contextBar.ClientSize.Width, 0)).Height : 0;
+        _contextBar.Height = LogicalToDeviceUnits(42) + optionsHeight;
     }
 
     /// <summary>Текстовый блок в ячейке: шрифт из верхней панели, свой текст сохраняется.</summary>
@@ -930,7 +1058,7 @@ public partial class LabelEditorControl : UserControl
         {
             Type = CellContentType.Text,
             Text = keepText,
-            FontName = _fontBox.SelectedItem as string,
+            FontName = SelectedFontName,
             FontSizePt = (float)_fontSizeBox.Value,
             Bold = _bold,
         };
@@ -945,7 +1073,7 @@ public partial class LabelEditorControl : UserControl
         if (_selectedObject is { Content.Type: CellContentType.Text } selected)
         {
             _undo.Push(_layout.Clone());
-            selected.Content.FontName = _fontBox.SelectedItem as string;
+            selected.Content.FontName = SelectedFontName;
             selected.Content.FontSizePt = (float)_fontSizeBox.Value;
             selected.Content.Bold = _bold;
             InvalidateCanvas();
@@ -966,7 +1094,7 @@ public partial class LabelEditorControl : UserControl
         {
             Type = CellContentType.Text,
             Text = cell.Content.Text,
-            FontName = _fontBox.SelectedItem as string,
+            FontName = SelectedFontName,
             FontSizePt = (float)_fontSizeBox.Value,
             Bold = _bold,
         };
@@ -982,19 +1110,31 @@ public partial class LabelEditorControl : UserControl
 
     private void ApplyTextOptionsStyle()
     {
-        _boldButton.BackColor = _bold ? Theme.Yellow : Color.White;
+        _boldButton.Checked = _bold;
+        if (!SystemInformation.HighContrast) _boldButton.BackColor = _bold ? Theme.SoftYellow : Theme.Surface;
     }
 
-    /// <summary>Настройки шрифта выбранной ячейки загружаются в верхнюю панель.</summary>
-    private void SyncTextOptionsFromCell(CellContent content)
+    private void SyncTextOptionsFromObject(LabelObject item)
     {
+        var content = item.Content;
         _updatingTextOpts = true;
         try
         {
-            if (!string.IsNullOrEmpty(content.FontName) && _fontBox.Items.Contains(content.FontName))
-                _fontBox.SelectedItem = content.FontName;
-            if (content.FontSizePt is { } size)
-                _fontSizeBox.Value = Math.Clamp((decimal)size, _fontSizeBox.Minimum, _fontSizeBox.Maximum);
+            if (_unavailableFont is not null)
+            {
+                _fontBox.Items.RemoveAt(_fontBox.Items.Count - 1);
+                _unavailableFont = null;
+            }
+            var index = string.IsNullOrWhiteSpace(content.FontName) ? 0 : _fontBox.FindStringExact(content.FontName, 0);
+            if (index < 0)
+            {
+                _unavailableFont = content.FontName;
+                index = _fontBox.Items.Add(content.FontName!);
+            }
+            _fontBox.SelectedIndex = index;
+            var size = content.FontSizePt ?? Math.Max(6f, (float)(Units.UmToMm(item.HeightUm) * 0.35 * 72 / 25.4));
+            if (!float.IsFinite(size)) size = 12;
+            _fontSizeBox.Value = (decimal)Math.Clamp(MathF.Round(size), (float)_fontSizeBox.Minimum, (float)_fontSizeBox.Maximum);
             _bold = content.Bold;
         }
         finally
@@ -1036,12 +1176,10 @@ public partial class LabelEditorControl : UserControl
         {
             fonts = new List<string> { "Arial", "Segoe UI" };
         }
+        _fontBox.Items.Add(L10n.T("TextOpts.DefaultFont"));
         foreach (var name in fonts)
             _fontBox.Items.Add(name);
-        if (fonts.Count == 0)
-            return;
-        var def = Theme.FontName;
-        _fontBox.SelectedItem = fonts.Contains(def) ? def : fonts[0];
+        _fontBox.SelectedIndex = 0;
     }
 
     /// <summary>
@@ -1063,7 +1201,7 @@ public partial class LabelEditorControl : UserControl
         }
         if (_canvas.Focused)
         {
-            if (HandleObjectKey(keyData)) return true;
+            if (HasProject && HandleCanvasKey(keyData)) return true;
             EditorTool? tool = keyData switch
             {
                 Keys.V => EditorTool.Select,
@@ -1086,6 +1224,8 @@ public partial class LabelEditorControl : UserControl
 /// <summary>Холст редактора: двойная буферизация, клик — в обработчик.</summary>
 public class CanvasPanel : Panel
 {
+    internal bool KeyboardCuesVisible => ShowFocusCues;
+
     public CanvasPanel()
     {
         BackColor = Theme.Canvas;

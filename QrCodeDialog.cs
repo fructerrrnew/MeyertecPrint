@@ -3,9 +3,7 @@ using System.Drawing.Text;
 namespace MeyertecPrint;
 
 /// <summary>
-/// Диалог QR-кода: ссылка (или произвольный текст) до 256 символов,
-/// живой предпросмотр — QR генерируется из введённой ссылки по мере ввода.
-/// Внесённый QR ЗАМЕНЯЕТ содержимое ячейки (поведение эталона).
+/// Ввод данных и предварительный просмотр QR-кода.
 /// </summary>
 public class QrCodeDialog : BrandForm
 {
@@ -13,15 +11,17 @@ public class QrCodeDialog : BrandForm
 
     private readonly TextBox _textBox = new()
     {
-        Dock = DockStyle.Fill,
-        Font = Theme.UiFont(11f),
+        Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical,
+        Font = Theme.UiFont(11)
     };
 
     private readonly Label _counterLabel = new()
     {
         AutoSize = true,
         ForeColor = Theme.SecondaryText,
-        Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        Dock = DockStyle.Fill,
+        TextAlign = ContentAlignment.MiddleLeft,
+        UseMnemonic = false
     };
 
     private readonly PictureBox _previewBox = new()
@@ -34,7 +34,7 @@ public class QrCodeDialog : BrandForm
 
     private readonly Button _okButton = new()
     {
-        Text = L10n.T("Dialog.OK"),
+        Text = L10n.T("Dialog.Apply"),
         DialogResult = DialogResult.OK,
         Width = 110,
     };
@@ -46,6 +46,7 @@ public class QrCodeDialog : BrandForm
 
     public QrCodeDialog(string? initialText = null)
     {
+        SuspendLayout();
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -53,8 +54,8 @@ public class QrCodeDialog : BrandForm
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(520, 260);
-        BackColor = Theme.LightBackground;
+        ClientSize = new Size(540, 278);
+        BackColor = Theme.Surface;
         Font = Theme.UiFont();
         Text = L10n.T("Qr.Title");
 
@@ -67,27 +68,21 @@ public class QrCodeDialog : BrandForm
         };
         left.RowStyles.Add(new RowStyle(SizeType.Absolute, 24f));
         left.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 38f));
 
         var header = new Label
         {
             Text = L10n.T("Qr.Link"),
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = Theme.Dark,
+            ForeColor = Theme.Text
         };
-
-        _counterLabel.Text = CounterText(MaxLength);
-        _textBox.TextChanged += (_, _) =>
-        {
-            var leftCount = MaxLength - _textBox.Text.Length;
-            _counterLabel.Text = CounterText(leftCount);
-            _counterLabel.ForeColor = leftCount < 0 ? Color.Firebrick : Theme.SecondaryText;
-            _okButton.Enabled = leftCount >= 0;
-            UpdatePreview();
-        };
+        _textBox.AccessibleName = header.Text;
+        _previewBox.AccessibleName = L10n.T("Qr.Preview");
+        _textBox.TextChanged += (_, _) => UpdatePreview();
 
         _textBox.Text = initialText ?? string.Empty;
+        UpdatePreview();
         left.Controls.Add(header, 0, 0);
         left.Controls.Add(_textBox, 0, 1);
         left.Controls.Add(_counterLabel, 0, 2);
@@ -114,6 +109,7 @@ public class QrCodeDialog : BrandForm
         AcceptButton = _okButton;
         CancelButton = cancelButton;
         Shown += (_, _) => _textBox.Focus();
+        ResumeLayout();
     }
 
     /// <summary>Перерисовывает предпросмотр: QR генерируется из введённой ссылки.</summary>
@@ -124,8 +120,11 @@ public class QrCodeDialog : BrandForm
         _previewBox.Image = null;
 
         var data = _textBox.Text;
-        if (string.IsNullOrEmpty(data))
-            return;
+        var left = MaxLength - data.Length;
+        _counterLabel.Text = left < 0 ? L10n.T("Qr.TooLong") : string.Format(L10n.T("Qr.Counter"), data.Length, MaxLength);
+        _counterLabel.ForeColor = left < 0 ? Theme.ErrorText : Theme.SecondaryText;
+        _okButton.Enabled = false;
+        if (data.Length == 0 || left < 0) return;
 
         try
         {
@@ -144,21 +143,25 @@ public class QrCodeDialog : BrandForm
                     g.FillRectangle(black, (c + quiet) * module, (r + quiet) * module, module, module);
             }
             _previewBox.Image = _preview;
+            _okButton.Enabled = true;
         }
-        catch
+        catch (Exception ex) when (ex is ZXing.WriterException or ArgumentException)
         {
-            // Данные не кодируются в QR (превышен объём) — предпросмотр пустой
+            _counterLabel.Text = L10n.T("Qr.InvalidData");
+            _counterLabel.ForeColor = Theme.ErrorText;
         }
     }
 
-    private static string CounterText(int left)
-        => string.Format(L10n.T("Qr.Counter"), left);
-
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (DialogResult == DialogResult.OK && _textBox.Text.Length <= MaxLength)
+        if (DialogResult == DialogResult.OK && _okButton.Enabled)
             QrText = _textBox.Text;
-        _preview?.Dispose();
         base.OnFormClosing(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _preview?.Dispose();
+        base.Dispose(disposing);
     }
 }

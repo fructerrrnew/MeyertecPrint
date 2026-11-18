@@ -11,7 +11,8 @@ public class LabelType
     public string? Source { get; set; }
     public string? Verification { get; set; }
     public LabelGeometry Geometry { get; set; } = new();
-    public string DisplayName => IsCustom ? L10n.T("Catalog.Custom") : Name;
+    public string DisplayName => IsCustom ? L10n.T("Catalog.Custom")
+        : Name == LabelTypeCatalog.Stock60x30 ? L10n.T("Catalog.Standard") : Name;
     public string SizeDisplay => $"{Units.UmToMm(Geometry.WidthUm):0.###} × {Units.UmToMm(Geometry.HeightUm):0.###} {L10n.T("Unit.Mm")}";
 }
 

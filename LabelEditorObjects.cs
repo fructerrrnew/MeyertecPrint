@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using System.Globalization;
 using System.Text.Json;
 
 namespace MeyertecPrint;
@@ -14,50 +13,86 @@ public partial class LabelEditorControl
     private LabelObject? _copiedObject;
     private NumericUpDown _objectX = null!, _objectY = null!, _objectWidth = null!, _objectHeight = null!;
     private ComboBox _zoomBox = null!;
-    private Button _calibrateButton = null!, _deleteObjectButton = null!;
+    private Button _calibrateButton = null!, _editObjectButton = null!, _deleteObjectButton = null!;
+    private TableLayoutPanel _objectFields = null!;
+    private Label _objectEmpty = null!, _objectUnitLabel = null!;
+    private bool _objectFieldsShown;
     private bool _updatingObjectFields;
-    private double _zoom = 2;
+    private static readonly double[] ZoomLevels = [0.5, 1, 2, 4];
+    private double _pixelsPerMm = 96 / 25.4;
     private Point _dragStart;
     private long _dragX, _dragY;
     private LabelLayout? _dragSnapshot;
     private bool _dragChanged;
     private (int Row, int Col)? _pendingLegacy;
 
-    private void InitializeObjectEditor(TableLayoutPanel geometry, FlowLayoutPanel history)
+    private void InitializeObjectEditor(FlowLayoutPanel history)
     {
-        AddSection(geometry, 11, "Object.Properties");
+        _objectFields = InspectorFields();
+        _objectFields.Padding = new Padding(13, 8, 13, 8);
+        AddSection(_objectFields, 0, "Object.Properties");
         _objectX = MakeMmBox(max: 60);
         _objectY = MakeMmBox(max: 30);
         _objectWidth = MakeMmBox(min: 0.1m, max: 60);
         _objectHeight = MakeMmBox(min: 0.1m, max: 30);
-        AddGeometryRow(geometry, 12, "Object.X", _objectX);
-        AddGeometryRow(geometry, 13, "Object.Y", _objectY);
-        AddGeometryRow(geometry, 14, "Object.Width", _objectWidth);
-        AddGeometryRow(geometry, 15, "Object.Height", _objectHeight);
-        _deleteObjectButton = new Button { Dock = DockStyle.Fill, Height = 30, Margin = new Padding(0, 6, 0, 0) };
+        AddGeometryRow(_objectFields, 1, "Object.X", _objectX);
+        AddGeometryRow(_objectFields, 2, "Object.Y", _objectY);
+        AddGeometryRow(_objectFields, 3, "Object.Width", _objectWidth);
+        AddGeometryRow(_objectFields, 4, "Object.Height", _objectHeight);
+        _objectUnitLabel = new Label
+        {
+            Dock = DockStyle.Fill, Height = 23, ForeColor = Theme.SecondaryText,
+            TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 4, 0, 6)
+        };
+        _objectFields.Controls.Add(_objectUnitLabel, 0, 5);
+        _objectFields.SetColumnSpan(_objectUnitLabel, 2);
+        _editObjectButton = new Button { Dock = DockStyle.Fill, Height = 34, Margin = new Padding(0, 0, 0, 8) };
+        Theme.StyleButton(_editObjectButton);
+        _editObjectButton.Click += (_, _) => EditSelectedObject();
+        _objectFields.Controls.Add(_editObjectButton, 0, 6);
+        _objectFields.SetColumnSpan(_editObjectButton, 2);
+        _deleteObjectButton = new Button { Dock = DockStyle.Fill, Height = 34, Margin = Padding.Empty };
         Theme.StyleButton(_deleteObjectButton);
         _deleteObjectButton.Click += (_, _) => DeleteSelectedObject();
-        geometry.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        geometry.Controls.Add(_deleteObjectButton, 0, 16);
-        geometry.SetColumnSpan(_deleteObjectButton, 2);
+        _objectFields.Controls.Add(_deleteObjectButton, 0, 7);
+        _objectFields.SetColumnSpan(_deleteObjectButton, 2);
+        _objectEmpty = new Label
+        {
+            Dock = DockStyle.Top, Height = 84, ForeColor = Theme.SecondaryText,
+            Padding = new Padding(15, 13, 15, 0), UseMnemonic = false
+        };
+        _objectFields.Visible = false;
+        _objectTab.Controls.Add(_objectFields);
+        _objectTab.Controls.Add(_objectEmpty);
         foreach (var field in new[] { _objectX, _objectY, _objectWidth, _objectHeight })
             field.ValueChanged += (_, _) => ObjectFieldsChanged();
-        _zoomBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 78, Margin = new Padding(4, 5, 4, 0) };
-        _zoomBox.Items.AddRange(new object[] { "50 %", "100 %", "200 %", "400 %" });
-        _zoomBox.SelectedIndex = 2;
+
+        _zoomBox = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList, Width = 142, Margin = new Padding(0, 6, 8, 0)
+        };
+        _zoomBox.Items.Add(L10n.T("Editor.Fit"));
+        foreach (var scale in ZoomLevels) _zoomBox.Items.Add($"{scale * 100:0} %");
+        _zoomBox.SelectedIndex = 0;
         _zoomBox.SelectedIndexChanged += (_, _) =>
         {
-            _zoom = new[] { 0.5, 1.0, 2.0, 4.0 }[_zoomBox.SelectedIndex];
+            _canvasPanel.AutoScroll = _zoomBox.SelectedIndex > 0;
+            _canvasPanel.AutoScrollPosition = Point.Empty;
             ResizePhysicalCanvas();
-            InvalidateCanvas();
         };
-        _calibrateButton = new Button { AutoSize = true, Height = 30, Margin = new Padding(3, 3, 8, 0) };
+        _calibrateButton = new Button
+        {
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 35),
+            Padding = new Padding(6, 0, 6, 0), Margin = new Padding(0, 0, 10, 0)
+        };
         Theme.StyleButton(_calibrateButton);
         _calibrateButton.Click += (_, _) => CalibrateDisplay();
         history.Controls.Add(_zoomBox);
         history.Controls.Add(_calibrateButton);
         history.Controls.SetChildIndex(_zoomBox, 0);
         history.Controls.SetChildIndex(_calibrateButton, 1);
+        for (var i = 0; i < history.Controls.Count; i++) history.Controls[i].TabIndex = i;
+        _canvasPanel.AutoScroll = false;
         ConfigureObjectUnits();
         UpdateObjectFields();
     }
@@ -67,34 +102,45 @@ public partial class LabelEditorControl
         if (_calibrateButton is null) return;
         _calibrateButton.Text = L10n.T("Object.Calibrate");
         _deleteObjectButton.Text = L10n.T("Object.Delete");
+        _editObjectButton.Text = L10n.T("Object.Edit");
+        _objectEmpty.Text = L10n.T("Object.NoSelection");
+        _zoomBox.Items[0] = L10n.T("Editor.Fit");
+        _zoomBox.AccessibleName = L10n.T("Object.Zoom");
         _tips.SetToolTip(_calibrateButton, L10n.T("Object.CalibrateTip"));
-        _tips.SetToolTip(_zoomBox, L10n.T("Object.Zoom"));
+        _tips.SetToolTip(_zoomBox, _zoomBox.AccessibleName);
     }
-
-    private double PixelsPerMm => DisplayCalibration.Get(_canvas) * _zoom;
 
     private void ResizePhysicalCanvas()
     {
         if (_canvasPanel is null || _canvas is null || _canvasPanel.IsDisposed) return;
-        var margin = LogicalToDeviceUnits(120);
-        var width = (int)Math.Ceiling(Units.UmToMm(_layout.MediaWidthUm) * PixelsPerMm) + margin;
-        var height = (int)Math.Ceiling(Units.UmToMm(_layout.MediaHeightUm) * PixelsPerMm) + margin;
-        _canvas.Size = new Size(Math.Max(_canvasPanel.ClientSize.Width - 2, width),
-            Math.Max(_canvasPanel.ClientSize.Height - 2, height));
+        var viewport = _canvasPanel.ClientSize;
+        var margin = LogicalToDeviceUnits(108);
+        var mediaWidth = Math.Max(1, Units.UmToMm(_layout.MediaWidthUm));
+        var mediaHeight = Math.Max(1, Units.UmToMm(_layout.MediaHeightUm));
+        var calibrated = DisplayCalibration.Get(_canvas);
+        var zoomIndex = _zoomBox?.SelectedIndex ?? 0;
+        var fit = Math.Min(Math.Max(1, viewport.Width - margin) / mediaWidth,
+            Math.Max(1, viewport.Height - margin) / mediaHeight);
+        var scale = zoomIndex <= 0 ? Math.Min(fit, calibrated * ZoomLevels[^1]) : calibrated * ZoomLevels[zoomIndex - 1];
+        if (_pixelsPerMm != scale) _canvasRasterValid = false;
+        _pixelsPerMm = scale;
+
+        _canvas.Size = zoomIndex <= 0 ? viewport : new Size(
+            Math.Max(viewport.Width, (int)Math.Ceiling(mediaWidth * scale) + margin),
+            Math.Max(viewport.Height, (int)Math.Ceiling(mediaHeight * scale) + margin));
+        _canvas.Invalidate();
     }
 
     private RectangleF PaperRect()
     {
-        var width = (float)(Units.UmToMm(_layout.MediaWidthUm) * PixelsPerMm);
-        var height = (float)(Units.UmToMm(_layout.MediaHeightUm) * PixelsPerMm);
-        var margin = LogicalToDeviceUnits(45);
-        return new RectangleF(Math.Max(margin, (_canvas.Width - width) / 2),
-            Math.Max(margin, (_canvas.Height - height) / 2), width, height);
+        var width = (float)(Units.UmToMm(_layout.MediaWidthUm) * _pixelsPerMm);
+        var height = (float)(Units.UmToMm(_layout.MediaHeightUm) * _pixelsPerMm);
+        return new RectangleF((_canvas.Width - width) / 2, (_canvas.Height - height) / 2, width, height);
     }
 
     private RectangleF ItemRect(LabelObject obj, RectangleF paper)
     {
-        var px = PixelsPerMm / 1000d;
+        var px = _pixelsPerMm / 1000d;
         return new RectangleF((float)(paper.Left + (obj.XUm + _displayPrintSettings.OffsetXMm * 1000) * px),
             (float)(paper.Top + (obj.YUm + _displayPrintSettings.OffsetYMm * 1000) * px),
             (float)(obj.WidthUm * px), (float)(obj.HeightUm * px));
@@ -103,20 +149,25 @@ public partial class LabelEditorControl
     private void DrawPhysicalCanvas(Graphics g, Rectangle clip)
     {
         _cellRects.Clear();
-        g.Clear(Theme.Canvas);
-        Theme.DrawGrid(g, clip, LogicalToDeviceUnits(17), Theme.Border);
+        var highContrast = SystemInformation.HighContrast;
+        g.Clear(highContrast ? Theme.Surface : Theme.Canvas);
+        if (!highContrast) Theme.DrawGrid(g, clip, LogicalToDeviceUnits(17), Theme.Border);
         if (!HasProject) return;
         var paper = PaperRect();
         var paperPixels = Rectangle.Round(paper);
-        using (var shadow = new SolidBrush(Color.FromArgb(32, Color.Black)))
-            g.FillRectangle(shadow, paper.X + 4, paper.Y + 4, paper.Width, paper.Height);
+        if (!highContrast)
+        {
+            using var shadow = new SolidBrush(Color.FromArgb(26, Theme.Dark));
+            var offset = LogicalToDeviceUnits(4);
+            g.FillRectangle(shadow, paper.X + offset, paper.Y + offset, paper.Width, paper.Height);
+        }
         g.FillRectangle(Brushes.White, paper);
         if (!_canvasRasterValid)
         {
             _canvasRaster?.Dispose(); _canvasRaster = null; _canvasRasterError = null;
             try
             {
-                var displayDpi = Math.Clamp((float)(PixelsPerMm * 25.4), 150f, 300f);
+                var displayDpi = Math.Clamp((float)(_pixelsPerMm * 25.4), 150f, 300f);
                 _canvasRaster = LabelPrintRenderer.Render(_layout, _displayPrintSettings, displayDpi, displayDpi);
             }
             catch (Exception ex) when (ex is InvalidDataException or OverflowException or ArgumentException)
@@ -133,57 +184,72 @@ public partial class LabelEditorControl
         else if (_canvasRasterError is not null)
             TextRenderer.DrawText(g, _canvasRasterError, Font,
                 new Rectangle(8, 8, Math.Max(10, _canvas.Width - 16), LogicalToDeviceUnits(40)),
-                Color.Firebrick, TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+                Theme.ErrorText, TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
+        RectangleF? selection = null;
         try
         {
             var plan = LabelPrintLayout.Create(_layout);
-            using var cellPen = new Pen(Color.FromArgb(115, Theme.SecondaryText)) { DashStyle = DashStyle.Dot };
+            using var cellPen = new Pen(Color.FromArgb(highContrast ? 255 : 140, Theme.Dark)) { DashStyle = DashStyle.Dot };
             foreach (var c in plan.Cells)
             {
                 var rect = new RectangleF(
-                    (float)(paper.Left + (c.X / 1000d + _displayPrintSettings.OffsetXMm) * PixelsPerMm),
-                    (float)(paper.Top + (c.Y / 1000d + _displayPrintSettings.OffsetYMm) * PixelsPerMm),
-                    (float)(c.Width / 1000d * PixelsPerMm), (float)(c.Height / 1000d * PixelsPerMm));
+                    (float)(paper.Left + (c.X / 1000d + _displayPrintSettings.OffsetXMm) * _pixelsPerMm),
+                    (float)(paper.Top + (c.Y / 1000d + _displayPrintSettings.OffsetYMm) * _pixelsPerMm),
+                    (float)(c.Width / 1000d * _pixelsPerMm), (float)(c.Height / 1000d * _pixelsPerMm));
                 _cellRects.Add((c.Row, c.Column, rect));
                 g.DrawRectangle(cellPen, rect.X, rect.Y, rect.Width, rect.Height);
+                if (_selectedRow == c.Row && _selectedCol == c.Column && selection is null) selection = rect;
             }
         }
         catch (Exception ex) when (ex is InvalidDataException or OverflowException) { }
-        using (var border = new Pen(Theme.Dark)) g.DrawRectangle(border, paperPixels);
+        using (var border = new Pen(highContrast ? SystemColors.WindowFrame : Theme.SecondaryText))
+            g.DrawRectangle(border, paperPixels);
         DrawRulers(g, paper);
         if (_selectedObject is not null && (_layout.Objects?.Contains(_selectedObject) ?? false))
+            selection = ItemRect(_selectedObject, paper);
+        if (selection is { } rectSelected)
         {
-            var rect = ItemRect(_selectedObject, paper);
-            using var select = new Pen(Color.FromArgb(255, 188, 0), 2) { DashStyle = DashStyle.Dash };
-            g.DrawRectangle(select, rect.X, rect.Y, rect.Width, rect.Height);
+            var accent = highContrast ? SystemColors.Highlight : Theme.RailSelectionBorder;
+            using var select = new Pen(accent, LogicalToDeviceUnits(2)) { DashStyle = DashStyle.Dash };
+            g.DrawRectangle(select, rectSelected.X, rectSelected.Y, rectSelected.Width, rectSelected.Height);
         }
+        if (_canvas.Focused && _canvas.KeyboardCuesVisible)
+            ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(paperPixels, LogicalToDeviceUnits(4), LogicalToDeviceUnits(4)));
     }
 
     private void DrawRulers(Graphics g, RectangleF paper)
     {
         using var pen = new Pen(Theme.SecondaryText);
-        var y = paper.Top - 7;
-        var x = paper.Left - 7;
+        var y = paper.Top - LogicalToDeviceUnits(8);
+        var x = paper.Left - LogicalToDeviceUnits(8);
+        var tickLength = LogicalToDeviceUnits(4);
         g.DrawLine(pen, paper.Left, y, paper.Right, y);
         g.DrawLine(pen, x, paper.Top, x, paper.Bottom);
-        var interval = PixelsPerMm < 2.5 ? 20 : PixelsPerMm < 4 ? 10 : 5;
-        for (var mm = 0; mm <= Units.UmToMm(_layout.MediaWidthUm); mm += interval)
+        var pixelsPerUnit = _pixelsPerMm * (_unitInch ? 25.4 : 1);
+        double[] intervals = _unitInch ? [0.1, 0.25, 0.5, 1, 2, 5, 10, 25] : [1, 2, 5, 10, 20, 50, 100, 250, 500];
+        var interval = intervals.FirstOrDefault(step => step * pixelsPerUnit >= LogicalToDeviceUnits(35), intervals[^1]);
+        for (var index = 0; index * interval * pixelsPerUnit <= paper.Width; index++)
         {
-            var tick = paper.Left + (float)(mm * PixelsPerMm);
-            g.DrawLine(pen, tick, y - 4, tick, y + 2);
-            TextRenderer.DrawText(g, mm.ToString(CultureInfo.InvariantCulture), Font,
-                new Point((int)tick - 7, (int)y - Font.Height - 3), Theme.SecondaryText);
+            var tick = paper.Left + (float)(index * interval * pixelsPerUnit);
+            g.DrawLine(pen, tick, y - tickLength, tick, y);
+            var text = (index * interval).ToString("0.##");
+            var width = TextRenderer.MeasureText(g, text, Font).Width;
+            TextRenderer.DrawText(g, text, Font, new Point((int)tick - width / 2, (int)y - Font.Height - tickLength),
+                Theme.SecondaryText);
         }
-        for (var mm = 0; mm <= Units.UmToMm(_layout.MediaHeightUm); mm += interval)
+        for (var index = 0; index * interval * pixelsPerUnit <= paper.Height; index++)
         {
-            var tick = paper.Top + (float)(mm * PixelsPerMm);
-            g.DrawLine(pen, x - 4, tick, x + 2, tick);
-            TextRenderer.DrawText(g, mm.ToString(CultureInfo.InvariantCulture), Font,
-                new Point((int)x - LogicalToDeviceUnits(27), (int)tick - Font.Height / 2), Theme.SecondaryText);
+            var tick = paper.Top + (float)(index * interval * pixelsPerUnit);
+            g.DrawLine(pen, x - tickLength, tick, x, tick);
+            var text = (index * interval).ToString("0.##");
+            var width = TextRenderer.MeasureText(g, text, Font).Width;
+            TextRenderer.DrawText(g, text, Font, new Point((int)x - width - tickLength, (int)tick - Font.Height / 2),
+                Theme.SecondaryText);
         }
-        TextRenderer.DrawText(g, L10n.T("Unit.Mm"), Font,
-            new Point((int)paper.Right + 4, (int)y - Font.Height), Theme.SecondaryText);
+        var unit = L10n.T(_unitInch ? "Unit.In" : "Unit.Mm");
+        TextRenderer.DrawText(g, unit, Font,
+            new Point((int)paper.Right + LogicalToDeviceUnits(10), (int)y - Font.Height - tickLength), Theme.SecondaryText);
     }
 
     private void HandlePhysicalMouseDown(MouseEventArgs e)
@@ -202,11 +268,9 @@ public partial class LabelEditorControl
                 return;
             }
             var hit = _cellRects.FirstOrDefault(c => c.Rect.Contains(e.Location));
-            SelectObject(null);
             if (hit != default)
             {
-                _selectedRow = hit.Row;
-                _selectedCol = hit.Col;
+                SelectCell(hit.Row, hit.Col);
                 if (_layout.Rows[hit.Row].Cells[hit.Col].Content.Type != CellContentType.Empty)
                 {
                     _pendingLegacy = (hit.Row, hit.Col);
@@ -215,22 +279,32 @@ public partial class LabelEditorControl
                     _canvas.Capture = true;
                 }
             }
+            else SelectObject(null);
             return;
         }
         if (_tool is EditorTool.SplitColumns or EditorTool.SplitRows)
         {
             var hit = _cellRects.FirstOrDefault(c => c.Rect.Contains(e.Location));
-            if (hit == default) return;
-            SelectCell(hit.Row, hit.Col);
-            if (_tool == EditorTool.SplitColumns) SplitColumnsAction(); else SplitRowsAction();
+            if (hit != default) SplitCellWithTool(hit.Row, hit.Col);
             return;
         }
+        PlaceObject(e.Location, paper);
+    }
+
+    private void SplitCellWithTool(int row, int column)
+    {
+        SelectCell(row, column);
+        if (_tool == EditorTool.SplitColumns) SplitColumnsAction(); else SplitRowsAction();
+    }
+
+    private void PlaceObject(PointF location, RectangleF paper)
+    {
         var content = AskForContent(_tool, null);
         if (content is null) return;
         var width = _tool switch { EditorTool.Text => 30_000L, EditorTool.Qr => 15_000L, EditorTool.Barcode => 40_000L, _ => 25_000L };
         var height = _tool switch { EditorTool.Text => 8_000L, EditorTool.Barcode => 10_000L, _ => 15_000L };
-        var x = (long)Math.Round(((e.X - paper.Left) / PixelsPerMm - _displayPrintSettings.OffsetXMm) * 1000) - width / 2;
-        var y = (long)Math.Round(((e.Y - paper.Top) / PixelsPerMm - _displayPrintSettings.OffsetYMm) * 1000) - height / 2;
+        var x = (long)Math.Round(((location.X - paper.Left) / _pixelsPerMm - _displayPrintSettings.OffsetXMm) * 1000) - width / 2;
+        var y = (long)Math.Round(((location.Y - paper.Top) / _pixelsPerMm - _displayPrintSettings.OffsetYMm) * 1000) - height / 2;
         width = Math.Min(width, _layout.MediaWidthUm);
         height = Math.Min(height, _layout.MediaHeightUm);
         var item = new LabelObject { XUm = x, YUm = y, WidthUm = width, HeightUm = height, Content = content };
@@ -239,17 +313,25 @@ public partial class LabelEditorControl
         (_layout.Objects ??= new()).Add(item);
         SelectObject(item);
         SetTool(EditorTool.Select);
+        RevealCanvasRect(ItemRect(item, paper));
+        FocusCanvas();
         LayoutChanged?.Invoke();
     }
 
     private void SelectObject(LabelObject? item)
     {
+        var keepCanvasFocus = _canvas.Focused;
         CommitInline();
         _selectedObject = item;
         _selectedRow = _selectedCol = null;
         _pendingLegacy = null;
-        if (item?.Content.Type == CellContentType.Text) SyncTextOptionsFromCell(item.Content);
+        if (item?.Content.Type == CellContentType.Text) SyncTextOptionsFromObject(item);
         UpdateSelectionUi();
+        if (item is not null && _inspector.SelectedTab != _objectTab)
+        {
+            _inspector.SelectedTab = _objectTab;
+            if (keepCanvasFocus) FocusCanvas();
+        }
         InvalidateCanvas();
     }
 
@@ -269,19 +351,16 @@ public partial class LabelEditorControl
         if (_pendingLegacy is { } legacy && (Math.Abs(e.X - _dragStart.X) >= 3 || Math.Abs(e.Y - _dragStart.Y) >= 3))
         {
             var item = ConvertLegacy(legacy.Row, legacy.Col);
-            _pendingLegacy = null;
-            _selectedObject = item;
-            _selectedRow = _selectedCol = null;
+            SelectObject(item);
             _dragX = item.XUm;
             _dragY = item.YUm;
-            if (item.Content.Type == CellContentType.Text) SyncTextOptionsFromCell(item.Content);
             _dragChanged = true;
         }
         if (_selectedObject is null) return;
         var beforeX = _selectedObject.XUm;
         var beforeY = _selectedObject.YUm;
-        _selectedObject.XUm = _dragX + (long)Math.Round((e.X - _dragStart.X) / PixelsPerMm * 1000);
-        _selectedObject.YUm = _dragY + (long)Math.Round((e.Y - _dragStart.Y) / PixelsPerMm * 1000);
+        _selectedObject.XUm = _dragX + (long)Math.Round((e.X - _dragStart.X) / _pixelsPerMm * 1000);
+        _selectedObject.YUm = _dragY + (long)Math.Round((e.Y - _dragStart.Y) / _pixelsPerMm * 1000);
         ClampObject(_selectedObject);
         _dragChanged |= beforeX != _selectedObject.XUm || beforeY != _selectedObject.YUm;
         UpdateObjectFields();
@@ -348,18 +427,14 @@ public partial class LabelEditorControl
 
     private void EditSelectedObject()
     {
-        if (_selectedObject is null && _selectedRow is { } row && _selectedCol is { } col &&
-            _layout.Rows[row].Cells[col].Content.Type != CellContentType.Empty)
-        {
-            var snapshot = _layout.Clone();
-            var converted = ConvertLegacy(row, col);
-            _undo.Push(snapshot);
-            SelectObject(converted);
-            LayoutChanged?.Invoke();
-        }
         var obj = _selectedObject;
-        if (obj is null) return;
-        var tool = obj.Content.Type switch
+        var cell = SelectedCell();
+        if (obj is null && cell is null) return;
+        var original = obj?.Content;
+        if (original is null && cell is { } selected)
+            original = selected.Layout.Rows[selected.Row].Cells[selected.Col].Content;
+        if (original is null) return;
+        var tool = original.Type switch
         {
             CellContentType.Text => EditorTool.Text,
             CellContentType.Qr => EditorTool.Qr,
@@ -367,11 +442,12 @@ public partial class LabelEditorControl
             CellContentType.Image => EditorTool.Image,
             _ => EditorTool.Select,
         };
-        var content = AskForContent(tool, obj.Content);
+        var content = AskForContent(tool, original);
         if (content is null) return;
         _undo.Push(_layout.Clone());
-        obj.Content = content;
-        SelectObject(obj);
+        var target = obj ?? ConvertLegacy(cell!.Value.Row, cell.Value.Col);
+        target.Content = content;
+        SelectObject(target);
         LayoutChanged?.Invoke();
     }
 
@@ -379,20 +455,44 @@ public partial class LabelEditorControl
     {
         if (tool == EditorTool.Text)
         {
-            using var dialog = new BrandForm { Text = L10n.T("Object.TextTitle"), StartPosition = FormStartPosition.CenterParent,
-                FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false,
-                ClientSize = new Size(430, 180), Font = Theme.UiFont(), BackColor = Color.White };
-            var input = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Left = 12, Top = 12,
-                Width = 406, Height = 110, Text = original?.Text ?? string.Empty };
-            var ok = new Button { Text = L10n.T("Dialog.OK"), DialogResult = DialogResult.OK, Left = 230, Top = 135, Width = 90 };
-            var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel, Left = 328, Top = 135, Width = 90 };
-            dialog.Controls.AddRange(new Control[] { input, ok, cancel });
+            using var dialog = new BrandForm
+            {
+                Text = L10n.T("Object.TextTitle"), StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false, ShowIcon = false,
+                ClientSize = new Size(470, 225), MinimumSize = new Size(360, 190),
+                Font = Theme.UiFont(), BackColor = Theme.Surface
+            };
+            dialog.SuspendLayout();
+            dialog.AutoScaleDimensions = new SizeF(96, 96);
+            dialog.AutoScaleMode = AutoScaleMode.Dpi;
+            var input = new TextBox
+            {
+                Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical,
+                Text = original?.Text ?? string.Empty, AccessibleName = dialog.Text
+            };
+            var fields = new Panel { Dock = DockStyle.Fill, Padding = new Padding(18, 16, 18, 14) };
+            fields.Controls.Add(input);
+            var ok = new Button
+            {
+                Text = L10n.T("Dialog.Apply"), DialogResult = DialogResult.OK, Enabled = input.TextLength > 0
+            };
+            var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel };
+            input.TextChanged += (_, _) => ok.Enabled = input.TextLength > 0;
+            input.KeyDown += (_, e) =>
+            {
+                if (e.KeyData != (Keys.Control | Keys.Enter) || !ok.Enabled) return;
+                e.SuppressKeyPress = true;
+                ok.PerformClick();
+            };
+            dialog.Controls.Add(fields);
+            dialog.Controls.Add(Theme.DialogFooter(ok, cancel));
             dialog.AcceptButton = ok;
             dialog.CancelButton = cancel;
             dialog.Shown += (_, _) => input.Focus();
+            dialog.ResumeLayout();
             if (dialog.ShowDialog(FindForm()) != DialogResult.OK || input.Text.Length == 0) return null;
             return new CellContent { Type = CellContentType.Text, Text = input.Text,
-                FontName = original?.FontName ?? _fontBox.SelectedItem as string,
+                FontName = original is null ? SelectedFontName : original.FontName,
                 FontSizePt = original?.FontSizePt ?? (float)_fontSizeBox.Value, Bold = original?.Bold ?? _bold };
         }
         if (tool == EditorTool.Qr)
@@ -450,8 +550,16 @@ public partial class LabelEditorControl
         if (_objectX is null) return;
         _updatingObjectFields = true;
         var fields = new[] { _objectX, _objectY, _objectWidth, _objectHeight };
-        foreach (var field in fields) field.Enabled = _selectedObject is not null;
-        if (_deleteObjectButton is not null) _deleteObjectButton.Enabled = _selectedObject is not null;
+        var showFields = _selectedObject is not null;
+        if (_objectFieldsShown != showFields)
+        {
+            _objectFieldsShown = showFields;
+            _objectTab.SuspendLayout();
+            _objectEmpty.Visible = !showFields;
+            _objectFields.Visible = showFields;
+            _objectTab.ResumeLayout();
+            _objectTab.Invalidate(true);
+        }
         if (_selectedObject is { } obj)
         {
             var vals = new[] { obj.XUm + Units.MmToUm(_displayPrintSettings.OffsetXMm),
@@ -459,7 +567,6 @@ public partial class LabelEditorControl
             for (var i = 0; i < fields.Length; i++)
                 fields[i].Value = Math.Clamp(UmToField(vals[i]), fields[i].Minimum, fields[i].Maximum);
         }
-        else foreach (var field in fields) field.Value = 0;
         _updatingObjectFields = false;
     }
 
@@ -488,6 +595,89 @@ public partial class LabelEditorControl
         var maxY = Math.Max(minY, _layout.MediaHeightUm - item.HeightUm - offsetY);
         item.XUm = Math.Clamp(item.XUm, minX, maxX);
         item.YUm = Math.Clamp(item.YUm, minY, maxY);
+    }
+
+    private bool HandleCanvasKey(Keys key)
+    {
+        if (key == Keys.Escape)
+        {
+            SetTool(EditorTool.Select);
+            SelectObject(null);
+            return true;
+        }
+
+        if ((key is Keys.PageUp or Keys.PageDown) && (_tool is EditorTool.Select or EditorTool.SplitColumns or EditorTool.SplitRows))
+        {
+            CycleCanvasSelection(key == Keys.PageDown ? 1 : -1);
+            return true;
+        }
+
+        if (key == Keys.Enter)
+        {
+            switch (_tool)
+            {
+                case EditorTool.Select:
+                    EditSelectedObject();
+                    break;
+                case EditorTool.SplitColumns:
+                case EditorTool.SplitRows:
+                    if (_selectedRow is null) CycleCanvasSelection(1);
+                    if (_selectedRow is { } row && _selectedCol is { } column) SplitCellWithTool(row, column);
+                    break;
+                default:
+                    var paper = PaperRect();
+                    PlaceObject(new PointF(paper.Left + paper.Width / 2, paper.Top + paper.Height / 2), paper);
+                    break;
+            }
+            return true;
+        }
+
+        return HandleObjectKey(key);
+    }
+
+    private void CycleCanvasSelection(int direction)
+    {
+        var selectObjects = _tool == EditorTool.Select;
+        var objects = _layout.Objects;
+        var objectCount = selectObjects ? objects.Count : 0;
+        var cells = _layout.Rows.SelectMany((row, rowIndex) => row.Cells.Select((cell, columnIndex) =>
+            (Row: rowIndex, Col: columnIndex, cell.Content.Type)))
+            .Where(cell => !selectObjects || cell.Type != CellContentType.Empty)
+            .Select(cell => (cell.Row, cell.Col)).ToList();
+        var count = objectCount + cells.Count;
+        if (count == 0) return;
+
+        var index = _selectedObject is not null ? objects.IndexOf(_selectedObject) : -1;
+        if (_selectedRow is { } row && _selectedCol is { } column)
+        {
+            var cellIndex = cells.IndexOf((row, column));
+            if (cellIndex >= 0) index = objectCount + cellIndex;
+        }
+        index = index < 0 ? (direction > 0 ? 0 : count - 1) : (index + direction + count) % count;
+        if (index < objectCount)
+        {
+            var item = objects[index];
+            SelectObject(item);
+            RevealCanvasRect(ItemRect(item, PaperRect()));
+        }
+        else
+        {
+            var target = cells[index - objectCount];
+            SelectCell(target.Row, target.Col);
+            var hit = _cellRects.FirstOrDefault(cell => cell.Row == target.Row && cell.Col == target.Col);
+            if (hit != default) RevealCanvasRect(hit.Rect);
+        }
+    }
+
+    private void RevealCanvasRect(RectangleF target)
+    {
+        if (!_canvasPanel.AutoScroll) return;
+        var position = _canvasPanel.AutoScrollPosition;
+        var viewport = new RectangleF(-position.X, -position.Y, _canvasPanel.ClientSize.Width, _canvasPanel.ClientSize.Height);
+        if (viewport.Contains(target)) return;
+        _canvasPanel.AutoScrollPosition = new Point(
+            Math.Max(0, (int)(target.Left + (target.Width - viewport.Width) / 2)),
+            Math.Max(0, (int)(target.Top + (target.Height - viewport.Height) / 2)));
     }
 
     private bool HandleObjectKey(Keys key)
@@ -587,35 +777,44 @@ internal sealed class DisplayCalibrationDialog : BrandForm
 {
     private readonly NumericUpDown _measured;
     private readonly Panel _sample;
-    private int SamplePixels => Math.Max(1, _sample.ClientSize.Width - 60);
+    private int SamplePixels => Math.Max(1, _sample.ClientSize.Width - 2 * LogicalToDeviceUnits(30));
     public double PixelsPerMm => SamplePixels / (double)_measured.Value;
 
     public DisplayCalibrationDialog(double currentPixelsPerMm)
     {
+        SuspendLayout();
         Text = L10n.T("Object.CalibrationTitle");
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = MinimizeBox = false;
-        ClientSize = new Size(460, 200);
+        AutoScaleDimensions = new SizeF(96, 96);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(460, 212);
         Font = Theme.UiFont();
-        BackColor = Color.White;
+        BackColor = Theme.Surface;
         var hint = new Label { Text = L10n.T("Object.CalibrationHint"), Left = 15, Top = 12, Width = 430, Height = 42 };
         _sample = new Panel { Left = 15, Top = 58, Width = 430, Height = 40, BackColor = Color.White };
         _sample.Paint += (_, e) =>
         {
-            using var pen = new Pen(Color.Black, 2);
-            e.Graphics.DrawLine(pen, 30, 18, _sample.ClientSize.Width - 30, 18);
-            e.Graphics.DrawLine(pen, 30, 9, 30, 27);
-            e.Graphics.DrawLine(pen, _sample.ClientSize.Width - 30, 9, _sample.ClientSize.Width - 30, 27);
+            var left = LogicalToDeviceUnits(30);
+            var right = _sample.ClientSize.Width - left;
+            var center = _sample.ClientSize.Height / 2;
+            var tick = LogicalToDeviceUnits(9);
+            using var pen = new Pen(Color.Black, LogicalToDeviceUnits(2));
+            e.Graphics.DrawLine(pen, left, center, right, center);
+            e.Graphics.DrawLine(pen, left, center - tick, left, center + tick);
+            e.Graphics.DrawLine(pen, right, center - tick, right, center + tick);
         };
         var label = new Label { Text = L10n.T("Object.MeasuredMm"), Left = 15, Top = 110, Width = 200, Height = 26 };
         _measured = new NumericUpDown { Left = 225, Top = 108, Width = 90, Minimum = 13, Maximum = 370,
             DecimalPlaces = 1, Increment = 0.5m, Value = Math.Clamp((decimal)(370 / currentPixelsPerMm), 13, 370) };
-        var ok = new Button { Text = L10n.T("Dialog.OK"), DialogResult = DialogResult.OK, Left = 245, Top = 155, Width = 90 };
-        var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel, Left = 345, Top = 155, Width = 90 };
-        Controls.AddRange(new Control[] { hint, _sample, label, _measured, ok, cancel });
+        _measured.AccessibleName = label.Text;
+        var ok = new Button { Text = L10n.T("Dialog.Apply"), DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel };
+        Controls.AddRange([hint, _sample, label, _measured, Theme.DialogFooter(ok, cancel)]);
         AcceptButton = ok;
         CancelButton = cancel;
         Shown += (_, _) => _measured.Value = Math.Clamp((decimal)(SamplePixels / currentPixelsPerMm), _measured.Minimum, _measured.Maximum);
+        ResumeLayout();
     }
 }

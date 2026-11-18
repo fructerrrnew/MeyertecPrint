@@ -8,6 +8,7 @@ public class InfoDialog : BrandForm
 {
     public InfoDialog()
     {
+        SuspendLayout();
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -72,5 +73,6 @@ public class InfoDialog : BrandForm
         Controls.Add(buttons);
         AcceptButton = closeButton;
         CancelButton = closeButton;
+        ResumeLayout();
     }
 }

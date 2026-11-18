@@ -5,14 +5,23 @@ public sealed class RibbonRecordDialog : BrandForm
 {
     private readonly DataGridView _grid = new() { Dock = DockStyle.Fill, AllowUserToAddRows = false,
         AllowUserToDeleteRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-        RowHeadersVisible = false, BackgroundColor = Color.White, BorderStyle = BorderStyle.None };
+        RowHeadersVisible = false, BackgroundColor = Theme.Surface, BorderStyle = BorderStyle.None };
     private readonly Dictionary<string, string> _original;
     public Dictionary<string, string> Result { get; private set; } = new();
     public RibbonRecordDialog(LabelLayout layout, Dictionary<string, string> fields)
     {
+        SuspendLayout();
         _original = fields;
-        Text = L10n.T("Ribbon.EditRecord"); StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(650, 440); MinimumSize = new Size(480, 320); Font = Theme.UiFont(); BackColor = Color.White;
+        Text = L10n.T("Ribbon.EditRecord");
+        StartPosition = FormStartPosition.CenterParent;
+        Size = new Size(650, 440);
+        MinimumSize = new Size(480, 320);
+        Font = Theme.UiFont();
+        BackColor = Theme.Surface;
+        AutoScaleDimensions = new SizeF(96, 96);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ShowIcon = MinimizeBox = false;
+        _grid.AccessibleName = Text;
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L10n.T("Ribbon.Field"), ReadOnly = true, FillWeight = 35 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = L10n.T("Ribbon.Value"), FillWeight = 65 });
         var targets = LabelPrintPages.GetBindings(layout);
@@ -24,7 +33,7 @@ public sealed class RibbonRecordDialog : BrandForm
             var row = _grid.Rows[_grid.Rows.Add($"{index + 1}. {L10n.T("Csv.Target." + content.Type)}", value)];
             row.Tag = key;
         }
-        var ok = new Button { Text = L10n.T("Dialog.OK"), Width = 110 };
+        var ok = new Button { Text = L10n.T("Dialog.Apply") };
         ok.Click += (_, _) =>
         {
             _grid.EndEdit();
@@ -40,5 +49,6 @@ public sealed class RibbonRecordDialog : BrandForm
         };
         var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel, Width = 110 };
         Controls.Add(_grid); Controls.Add(Theme.DialogFooter(ok, cancel)); AcceptButton = ok; CancelButton = cancel;
+        ResumeLayout();
     }
 }

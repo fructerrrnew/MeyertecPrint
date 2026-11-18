@@ -1,9 +1,7 @@
 namespace MeyertecPrint;
 
 /// <summary>
-/// Диалог 1D-штрихкода (предложение для новой реализации — в эталоне кнопка
-/// блокировалась, не была исследована). Выбор символа (Code 128 / EAN-13)
-/// и значение с проверкой валидности; OK доступен только для валидного ввода.
+/// Ввод данных для Code 128 или EAN-13 с проверкой значения.
 /// </summary>
 public class BarcodeDialog : BrandForm
 {
@@ -20,14 +18,15 @@ public class BarcodeDialog : BrandForm
 
     private readonly Label _validationLabel = new()
     {
-        AutoSize = true,
-        ForeColor = Theme.SecondaryText,
-        MaximumSize = new Size(220, 0),
+        Dock = DockStyle.Fill,
+        ForeColor = Theme.ErrorText,
+        UseMnemonic = false,
+        AccessibleRole = AccessibleRole.Alert
     };
 
     private readonly Button _okButton = new()
     {
-        Text = L10n.T("Dialog.OK"),
+        Text = L10n.T("Dialog.Apply"),
         DialogResult = DialogResult.OK,
         Width = 110,
         Enabled = false,
@@ -39,6 +38,7 @@ public class BarcodeDialog : BrandForm
 
     public BarcodeDialog(string? initialValue = null, BarcodeSymbol initialSymbol = BarcodeSymbol.Code128)
     {
+        SuspendLayout();
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -46,8 +46,8 @@ public class BarcodeDialog : BrandForm
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(420, 210);
-        BackColor = Theme.LightBackground;
+        ClientSize = new Size(456, 211);
+        BackColor = Theme.Surface;
         Font = Theme.UiFont();
         Text = L10n.T("Barcode.Title");
 
@@ -67,13 +67,15 @@ public class BarcodeDialog : BrandForm
         fields.RowStyles.Add(new RowStyle(SizeType.Percent, 40f));
         fields.RowStyles.Add(new RowStyle(SizeType.Percent, 60f));
 
-        fields.Controls.Add(MakeLabel(L10n.T("Barcode.Symbol")), 0, 0);
+        _symbolBox.AccessibleName = L10n.T("Barcode.Symbol");
+        _valueBox.AccessibleName = L10n.T("Barcode.Value");
+        fields.Controls.Add(MakeLabel(_symbolBox.AccessibleName), 0, 0);
         fields.Controls.Add(_symbolBox, 1, 0);
-        fields.Controls.Add(MakeLabel(L10n.T("Barcode.Value")), 0, 1);
+        fields.Controls.Add(MakeLabel(_valueBox.AccessibleName), 0, 1);
         fields.Controls.Add(_valueBox, 1, 1);
 
         _validationLabel.Visible = false;
-        var validationPanel = new Panel { Dock = DockStyle.Top, Height = 26, Padding = new Padding(18, 2, 16, 0) };
+        var validationPanel = new Panel { Dock = DockStyle.Top, Height = 53, Padding = new Padding(18, 4, 16, 0) };
         validationPanel.Controls.Add(_validationLabel);
 
         _symbolBox.SelectedIndexChanged += (_, _) => Validate();
@@ -96,6 +98,7 @@ public class BarcodeDialog : BrandForm
         AcceptButton = _okButton;
         CancelButton = cancelButton;
         Shown += (_, _) => _valueBox.Focus();
+        ResumeLayout();
     }
 
     private new void Validate()
@@ -121,7 +124,6 @@ public class BarcodeDialog : BrandForm
 
         _validationLabel.Visible = error.Length > 0;
         _validationLabel.Text = error;
-        _validationLabel.ForeColor = Color.Firebrick;
         _okButton.Enabled = error.Length == 0;
     }
 
@@ -138,6 +140,6 @@ public class BarcodeDialog : BrandForm
             Text = text,
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = Theme.Dark,
+            ForeColor = Theme.Text
         };
 }

@@ -31,6 +31,7 @@ public class SplitRowDialog : BrandForm
 
     public SplitRowDialog(long rowHeightUm, long stripWidthUm, long stripHeightUm)
     {
+        SuspendLayout();
         _rowHeightUm = rowHeightUm;
 
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -103,6 +104,7 @@ public class SplitRowDialog : BrandForm
         AcceptButton = okButton;
         CancelButton = cancelButton;
         UpdateHeight();
+        ResumeLayout();
     }
 
     private void UpdateHeight()

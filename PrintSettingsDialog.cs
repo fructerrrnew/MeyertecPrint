@@ -10,19 +10,42 @@ public sealed class PrintSettingsDialog : BrandForm
     private readonly ComboBox _connection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly ComboBox _queues = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly TextBox _host = new() { Dock = DockStyle.Fill };
-    private readonly Label _port = new() { Dock = DockStyle.Fill, ForeColor = Theme.SecondaryText, AutoEllipsis = true };
-    private readonly Label _status = new() { Dock = DockStyle.Fill, ForeColor = Theme.SecondaryText };
+    private readonly Label _port = new()
+    {
+        Dock = DockStyle.Fill, AutoEllipsis = true, Height = 22, ForeColor = Theme.SecondaryText, UseMnemonic = false
+    };
+    private readonly Label _driverHint = new()
+    {
+        Dock = DockStyle.Fill, AutoSize = true, ForeColor = Theme.SecondaryText, Margin = new Padding(0, 4, 0, 0)
+    };
+    private readonly Label _status = new()
+    {
+        Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(17, 8, 17, 4),
+        ForeColor = Theme.SecondaryText, AccessibleRole = AccessibleRole.Alert, UseMnemonic = false
+    };
+    private readonly Label _summary = new()
+    {
+        Dock = DockStyle.Fill, AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(0, 5, 0, 0)
+    };
+    private readonly Control _hostField;
+    private readonly TableLayoutPanel _range;
     private readonly NumericUpDown _width = Number(1, 300, 60), _height = Number(1, 762, 30);
     private readonly NumericUpDown _offsetX = Number(-50, 50, 0), _offsetY = Number(-50, 50, 0);
     private readonly NumericUpDown _copies = Number(1, 500, 1, 0);
     private readonly CheckBox _imported = new() { AutoSize = true };
     private readonly NumericUpDown _from = Number(1, 1, 1, 0), _to = Number(1, 1, 1, 0);
     private readonly int _importedCount;
-    private readonly Button _test = new() { Dock = DockStyle.Fill };
+    private readonly Button _test = new()
+    {
+        Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        MinimumSize = new Size(0, 28), Margin = new Padding(7, 0, 0, 0)
+    };
     private sealed record ConnectionOption(string Key, string Caption) { public override string ToString() => Caption; }
     private readonly bool _forPrint;
     private readonly PrintSettings _original;
     private bool _updating;
+    private bool _testing;
+    private int _connectionRevision;
     public PrintSettings Result { get; private set; } = new();
     public string? PrinterModel => _models.SelectedItem as string;
     public long MediaWidthUm => Units.MmToUm((double)_width.Value);
@@ -33,68 +56,100 @@ public sealed class PrintSettingsDialog : BrandForm
 
     public PrintSettingsDialog(ProjectFile project, LabelLayout layout, int importedCount, bool forPrint)
     {
+        SuspendLayout();
         _forPrint = forPrint;
         _importedCount = importedCount;
         _original = project.Print ?? new PrintSettings();
         Text = L10n.T(forPrint ? "Setup.PrintTitle" : "PrintSettings.Title");
         StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = MinimizeBox = false;
+        MinimizeBox = false;
         ShowIcon = false;
-        AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(660, 620);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(760, forPrint ? 490 : 420);
+        MinimumSize = new Size(615, 385);
         Font = Theme.UiFont();
-        BackColor = Color.White;
-        var title = new Label { Dock = DockStyle.Top, Height = 65, Padding = new Padding(22, 0, 0, 0),
-            TextAlign = ContentAlignment.MiddleLeft, BackColor = Color.Black, ForeColor = Color.White,
-            Font = Theme.UiFont(14, FontStyle.Bold), Text = L10n.T(forPrint ? "Setup.PrintTitle" : "PrintSettings.Title") };
-        var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 11,
-            Padding = new Padding(22, 12, 22, 4), AutoScroll = true, BackColor = Color.White };
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
-        for (var i = 0; i < 9; i++) fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
-        Add(fields, 0, "PrintSettings.Model", _models);
-        Add(fields, 1, "Setup.Connection", _connection);
-        Add(fields, 2, "Setup.Queue", _queues);
-        Add(fields, 3, "Setup.Port", _port);
-        var hostLine = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        hostLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 72));
-        hostLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
-        hostLine.Controls.Add(_host, 0, 0); hostLine.Controls.Add(_test, 1, 0);
-        _test.Text = L10n.T("Setup.Test"); Theme.StyleButton(_test);
-        Add(fields, 4, "Setup.Host", hostLine);
-        Add(fields, 5, "Setup.Width", _width);
-        Add(fields, 6, "Setup.Height", _height);
-        Add(fields, 7, "Setup.OffsetX", _offsetX);
-        Add(fields, 8, "Setup.OffsetY", _offsetY);
-        Add(fields, 9, "Setup.Copies", _copies);
-        _status.Text = L10n.T("Setup.DriverHint");
-        fields.Controls.Add(_status, 0, 10); fields.SetColumnSpan(_status, 2);
-        var extras = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 70, Padding = new Padding(22, 2, 22, 0),
-            BackColor = Color.White, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        BackColor = Theme.Surface;
+
+        var printer = Section("Setup.PrinterSection");
+        Add(printer, 1, LabeledField("PrintSettings.Model", _models), LabeledField("Setup.Connection", _connection));
+        Add(printer, 2, LabeledField("Setup.Queue", _queues));
+        Add(printer, 3, LabeledField("Setup.Port", _port));
+        var hostLine = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 1, Margin = Padding.Empty
+        };
+        hostLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        hostLine.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        hostLine.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _host.Dock = DockStyle.None;
+        _host.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        _host.Margin = Padding.Empty;
+        _host.AccessibleName = L10n.T("Setup.Host");
+        _test.Text = L10n.T("Setup.Test");
+        _test.Padding = new Padding(6, 0, 6, 0);
+        Theme.StyleButton(_test);
+        hostLine.Controls.Add(_host, 0, 0);
+        hostLine.Controls.Add(_test, 1, 0);
+        _hostField = LabeledField("Setup.Host", hostLine);
+        Add(printer, 4, _hostField);
+        Add(printer, 5, _driverHint);
+
+        var job = Section("Setup.MediaSection");
+        Add(job, 1, LabeledField("Setup.Width", _width), LabeledField("Setup.Height", _height));
+        Add(job, 2, LabeledField("Setup.OffsetX", _offsetX), LabeledField("Setup.OffsetY", _offsetY));
+        Add(job, 3, LabeledField("Setup.Copies", _copies));
         _imported.Text = string.Format(L10n.T("Setup.Imported"), importedCount);
-        _imported.Enabled = importedCount > 0;
         _imported.Checked = importedCount > 0;
-        extras.Controls.Add(_imported);
-        var range = new FlowLayoutPanel { Width = 550, Height = 35, WrapContents = false };
-        range.Controls.Add(new Label { Text = L10n.T("Setup.Range"), AutoSize = true, Margin = new Padding(0, 6, 8, 0) });
-        _from.Dock = _to.Dock = DockStyle.None; _from.Width = _to.Width = 80;
-        range.Controls.Add(_from);
-        range.Controls.Add(new Label { Text = "–", AutoSize = true, Margin = new Padding(8, 6, 8, 0) });
-        range.Controls.Add(_to); extras.Controls.Add(range);
+        _imported.Margin = new Padding(0, 3, 0, 9);
+        _imported.Visible = forPrint && importedCount > 0;
+        Add(job, 4, _imported);
+        _range = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 1, Margin = Padding.Empty
+        };
+        _range.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        _range.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        Add(_range, 0, LabeledField("Setup.RangeFrom", _from), LabeledField("Setup.RangeTo", _to));
+        Add(job, 5, _range);
+        _summary.Visible = forPrint;
+        Add(job, 6, _summary);
         _imported.CheckedChanged += (_, _) => UpdateRange();
-        UpdateRange();
-        extras.Visible = forPrint;
-        var ok = new Button { Text = L10n.T(forPrint ? "Setup.Print" : "Dialog.OK"), Width = 110 };
+        _from.ValueChanged += (_, _) => UpdateSummary();
+        _to.ValueChanged += (_, _) => UpdateSummary();
+        _copies.ValueChanged += (_, _) => UpdateSummary();
+
+        var columns = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 1, Padding = new Padding(15, 14, 15, 12)
+        };
+        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        columns.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        printer.Margin = new Padding(0, 0, 8, 0);
+        job.Margin = new Padding(8, 0, 0, 0);
+        columns.Controls.Add(printer, 0, 0);
+        columns.Controls.Add(job, 1, 0);
+        columns.SizeChanged += (_, _) =>
+        {
+            var width = (columns.ClientSize.Width - columns.Padding.Horizontal) / 2;
+            var limit = new Size(Math.Max(1, width - printer.Margin.Horizontal - printer.Padding.Horizontal), 0);
+            if (_driverHint.MaximumSize != limit) _driverHint.MaximumSize = limit;
+        };
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        scroll.Controls.Add(columns);
+        var ok = new Button { Text = L10n.T(forPrint ? "Setup.Print" : "Dialog.Apply") };
         var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel };
         ok.Click += OnAccept;
         _test.Click += async (_, _) => await TestNetwork();
-        var footer = Theme.DialogFooter(ok, cancel);
-        Controls.Add(fields); Controls.Add(extras); Controls.Add(footer); Controls.Add(title);
-        AcceptButton = ok; CancelButton = cancel;
+        Controls.Add(scroll);
+        Controls.Add(_status);
+        Controls.Add(Theme.DialogFooter(ok, cancel));
+        AcceptButton = ok;
+        CancelButton = cancel;
 
         _updating = true;
         foreach (var model in PrinterPlugins.All) _models.Items.Add(model.Name);
@@ -120,24 +175,92 @@ public sealed class PrintSettingsDialog : BrandForm
         _queues.SelectedIndexChanged += (_, _) => UpdatePort(true);
         _connection.SelectedIndexChanged += (_, _) => UpdatePort(false);
         _models.SelectedIndexChanged += (_, _) => { PopulateConnections((_connection.SelectedItem as ConnectionOption)?.Key); UpdatePort(true); };
+        _host.TextChanged += (_, _) =>
+        {
+            _connectionRevision++;
+            if (_testing) ShowStatus(string.Empty);
+        };
+        UpdateRange();
         UpdatePort(string.IsNullOrWhiteSpace(_host.Text));
+        ResumeLayout();
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        Theme.FitDialogToScreen(this);
     }
 
     private void UpdateRange()
     {
         var maximum = _imported.Checked ? 1 + _importedCount : 1;
         _from.Maximum = _to.Maximum = maximum;
-        _from.Value = 1; _to.Value = maximum;
+        _from.Value = 1;
+        _to.Value = maximum;
+        _range.Visible = _forPrint && _imported.Checked;
+        UpdateSummary();
+    }
+
+    private void UpdateSummary()
+    {
+        var count = Math.Max(0, _to.Value - _from.Value + 1) * _copies.Value;
+        _summary.Text = string.Format(L10n.T("Setup.PageTotal"), count);
     }
 
     private static NumericUpDown Number(decimal minimum, decimal maximum, decimal value, int decimals = 3) => new()
-    { Minimum = minimum, Maximum = maximum, Value = value, DecimalPlaces = decimals, Increment = decimals == 0 ? 1 : 0.1m, Dock = DockStyle.Fill };
-
-    private static void Add(TableLayoutPanel panel, int row, string key, Control control)
     {
-        panel.Controls.Add(new Label { Text = L10n.T(key), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Theme.Dark }, 0, row);
-        control.Margin = new Padding(0, 4, 0, 4);
-        panel.Controls.Add(control, 1, row);
+        Minimum = minimum, Maximum = maximum, Value = value, DecimalPlaces = decimals,
+        Increment = decimals == 0 ? 1 : 0.1m, Dock = DockStyle.Fill, TextAlign = HorizontalAlignment.Right
+    };
+
+    private static TableLayoutPanel Section(string title)
+    {
+        var section = new TableLayoutPanel
+        {
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2,
+            BackColor = SystemInformation.HighContrast ? Theme.Surface : Theme.RailSurface, Padding = new Padding(13)
+        };
+        section.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        section.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        Add(section, 0, new Label
+        {
+            Dock = DockStyle.Fill, AutoSize = true, Text = L10n.T(title),
+            Font = Theme.UiFont(12, FontStyle.Bold), ForeColor = Theme.Text, Margin = new Padding(0, 0, 0, 12)
+        });
+        return section;
+    }
+
+    private static TableLayoutPanel LabeledField(string key, Control field)
+    {
+        var name = L10n.T(key);
+        field.AccessibleName ??= name;
+        field.Margin = Padding.Empty;
+        var pair = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 0, 0, 10)
+        };
+        pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pair.Controls.Add(new Label
+        {
+            Text = name, AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(0, 0, 0, 4)
+        }, 0, 0);
+        pair.Controls.Add(field, 0, 1);
+        return pair;
+    }
+
+    private static void Add(TableLayoutPanel panel, int row, Control first, Control? second = null)
+    {
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.Controls.Add(first, 0, row);
+        if (second is null)
+        {
+            panel.SetColumnSpan(first, 2);
+            return;
+        }
+        second.Margin = new Padding(10, second.Margin.Top, second.Margin.Right, second.Margin.Bottom);
+        panel.Controls.Add(second, 1, row);
     }
 
     private void PopulateConnections(string? preferred)
@@ -158,59 +281,108 @@ public sealed class PrintSettingsDialog : BrandForm
     private void UpdatePort(bool updateHost)
     {
         if (_updating) return;
+        _connectionRevision++;
         var ethernet = (_connection.SelectedItem as ConnectionOption)?.Key == "ethernet";
-        _host.Enabled = _test.Enabled = ethernet;
+        _hostField.Visible = ethernet;
+        _test.Enabled = ethernet && !_testing;
         var port = PrinterQueues.GetPort(_queues.SelectedItem as string ?? string.Empty);
-        _port.Text = string.IsNullOrEmpty(port) ? L10n.T("Setup.UnknownPort") : port;
+        _port.Text = string.IsNullOrEmpty(port) ? "—" : port;
         if (updateHost && ethernet) _host.Text = PrinterQueues.GetNetworkHost(port);
-        _status.Text = L10n.T(ethernet ? "Setup.NetworkHint" : "Setup.DriverHint");
+        _driverHint.Text = L10n.T(ethernet ? "Setup.NetworkHint" : "Setup.DriverHint");
+        ShowStatus(_queues.Items.Count == 0 ? L10n.T("Setup.NoQueues") : string.Empty, error: _forPrint);
+    }
+
+    private void ShowStatus(string message, bool error = false, Control? field = null)
+    {
+        _status.Text = message;
+        _status.ForeColor = error ? Theme.ErrorText : Theme.SecondaryText;
+        _status.Visible = message.Length > 0;
+        field?.Focus();
     }
 
     private async Task TestNetwork()
     {
         var address = _host.Text.Trim();
-        if (string.IsNullOrWhiteSpace(address)) { _status.Text = L10n.T("Setup.HostRequired"); return; }
+        if (address.Length == 0)
+        {
+            ShowStatus(L10n.T("Setup.HostRequired"), error: true, field: _host);
+            return;
+        }
+        var revision = _connectionRevision;
+        _testing = true;
         _test.Enabled = false;
-        _status.Text = L10n.T("Setup.Checking");
+        ShowStatus(L10n.T("Setup.Checking"));
         try
         {
             using var client = new TcpClient();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             await client.ConnectAsync(address, 9100, timeout.Token);
-            _status.Text = L10n.T("Setup.Reachable");
+            if (!IsDisposed && revision == _connectionRevision) ShowStatus(L10n.T("Setup.Reachable"));
         }
         catch (Exception ex) when (ex is SocketException or OperationCanceledException or ArgumentException)
-        { _status.Text = string.Format(L10n.T("Setup.Unreachable"), ex.Message); }
-        finally { if (!IsDisposed) _test.Enabled = (_connection.SelectedItem as ConnectionOption)?.Key == "ethernet"; }
+        {
+            if (!IsDisposed && revision == _connectionRevision)
+                ShowStatus(string.Format(L10n.T("Setup.Unreachable"), ex.Message), error: true);
+        }
+        finally
+        {
+            _testing = false;
+            if (!IsDisposed) _test.Enabled = (_connection.SelectedItem as ConnectionOption)?.Key == "ethernet";
+        }
     }
 
     private void OnAccept(object? sender, EventArgs e)
     {
-        if (_forPrint && _from.Value > _to.Value) { _status.Text = L10n.T("Setup.InvalidRange"); return; }
+        if (_forPrint && _from.Value > _to.Value)
+        {
+            ShowStatus(L10n.T("Setup.InvalidRange"), error: true, field: _from);
+            return;
+        }
         if (_models.SelectedItem is not string model)
-        { _status.Text = L10n.T("Setup.NoModel"); return; }
+        {
+            ShowStatus(L10n.T("Setup.NoModel"), error: true, field: _models);
+            return;
+        }
         var plugin = PrinterPlugins.All.First(x => x.Name == model);
         var minWidth = plugin.MinMediaWidthMm > 0 ? plugin.MinMediaWidthMm : 1;
         var maxWidth = plugin.MaxMediaWidthMm > 0 ? plugin.MaxMediaWidthMm : plugin.MaxPrintWidthMm;
         var minLength = plugin.MinPrintLengthMm > 0 ? plugin.MinPrintLengthMm : 1;
-        if ((double)_width.Value < minWidth || (double)_width.Value > maxWidth ||
-            (double)_height.Value < minLength || (double)_height.Value > plugin.MaxPrintLengthMm)
-        { _status.Text = string.Format(L10n.T("Setup.MediaLimits"), minWidth, maxWidth, minLength, plugin.MaxPrintLengthMm); return; }
+        var invalidWidth = (double)_width.Value < minWidth || (double)_width.Value > maxWidth;
+        if (invalidWidth || (double)_height.Value < minLength || (double)_height.Value > plugin.MaxPrintLengthMm)
+        {
+            ShowStatus(string.Format(L10n.T("Setup.MediaLimits"), minWidth, maxWidth, minLength, plugin.MaxPrintLengthMm),
+                error: true, field: invalidWidth ? _width : _height);
+            return;
+        }
+        var queue = _queues.SelectedItem as string;
+        if (_forPrint && string.IsNullOrWhiteSpace(queue))
+        {
+            ShowStatus(L10n.T(_queues.Items.Count == 0 ? "Setup.NoQueues" : "Setup.ChooseQueue"), error: true, field: _queues);
+            return;
+        }
         if (_forPrint && (double)_width.Value > plugin.MaxPrintWidthMm &&
             BrandMessageBox.Show(this, string.Format(L10n.T("Setup.WideMedia"), plugin.MaxPrintWidthMm),
                 Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        var queue = _queues.SelectedItem as string;
-        if (_forPrint && string.IsNullOrWhiteSpace(queue)) { _status.Text = L10n.T("Print.NoPrinter"); return; }
-        if (_connection.SelectedItem is not ConnectionOption) { _status.Text = L10n.T("Setup.NoConnection"); return; }
+        if (_connection.SelectedItem is not ConnectionOption)
+        {
+            ShowStatus(L10n.T("Setup.NoConnection"), error: true, field: _connection);
+            return;
+        }
         var ethernet = (_connection.SelectedItem as ConnectionOption)?.Key == "ethernet";
         if (!ethernet && !string.IsNullOrEmpty(queue) && !string.IsNullOrEmpty(PrinterQueues.GetNetworkHost(PrinterQueues.GetPort(queue))))
-        { _status.Text = L10n.T("Setup.UsbMismatch"); return; }
+        {
+            ShowStatus(L10n.T("Setup.UsbMismatch"), error: true, field: _queues);
+            return;
+        }
         var host = _host.Text.Trim();
         if (ethernet && !string.IsNullOrEmpty(queue))
         {
             var match = PrinterQueues.CompareNetworkHost(PrinterQueues.GetPort(queue), host);
             if (match == PrinterQueues.HostMatch.Mismatch)
-            { _status.Text = L10n.T("Setup.HostMismatch"); return; }
+            {
+                ShowStatus(L10n.T("Setup.HostMismatch"), error: true, field: _host);
+                return;
+            }
             if (match == PrinterQueues.HostMatch.Unknown &&
                 BrandMessageBox.Show(this, L10n.T("Setup.QueueUnverified"), Text,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;

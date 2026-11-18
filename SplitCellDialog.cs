@@ -31,6 +31,7 @@ public class SplitCellDialog : BrandForm
 
     public SplitCellDialog(long cellWidthUm)
     {
+        SuspendLayout();
         _cellWidthUm = cellWidthUm;
 
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -96,6 +97,7 @@ public class SplitCellDialog : BrandForm
         AcceptButton = okButton;
         CancelButton = cancelButton;
         UpdateWidth();
+        ResumeLayout();
     }
 
     private void UpdateWidth()
