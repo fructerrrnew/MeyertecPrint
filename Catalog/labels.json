@@ -1,0 +1,9 @@
+[
+  {"name":"Custom label","isCustom":true,"geometry":{"labelsInRow":1,"widthUm":60000,"heightUm":30000}},
+  {"name":"60 x 30 mm","geometry":{"labelsInRow":1,"widthUm":60000,"heightUm":30000},"source":"user-confirmed","verification":"user-supplied"},
+  {"name":"WAGO 210-805","geometry":{"labelsInRow":2,"widthUm":15000,"heightUm":6000},"source":"https://www.wago.com/us/marking/labels/p/210-805","referenceOnly":true},
+  {"name":"WAGO 210-806","geometry":{"labelsInRow":2,"widthUm":15000,"heightUm":9000},"source":"https://www.wago.com/global/marking/labels/p/210-806","referenceOnly":true},
+  {"name":"WAGO 210-807","geometry":{"labelsInRow":2,"widthUm":20000,"heightUm":8000},"source":"https://www.wago.com/global/marking/labels/p/210-807","referenceOnly":true},
+  {"name":"WAGO 210-808","geometry":{"labelsInRow":2,"widthUm":25000,"heightUm":9500},"source":"https://www.wago.com/us/marking/labels/p/210-808","referenceOnly":true},
+  {"name":"WAGO 210-810","geometry":{"labelsInRow":1,"widthUm":35000,"heightUm":5000},"source":"https://www.wago.com/global/marking/labels/p/210-810","referenceOnly":true}
+]

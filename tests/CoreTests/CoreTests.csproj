@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../CsvReader.cs" Link="CsvReader.cs" />
+    <Compile Include="../../CsvBatch.cs" Link="CsvBatch.cs" />
+    <Compile Include="../../GeometryOperations.cs" Link="GeometryOperations.cs" />
+    <Compile Include="../../LabelModel.cs" Link="LabelModel.cs" />
+    <Compile Include="../../LabelTypes.cs" Link="LabelTypes.cs" />
+    <Compile Include="../../LabelPrintLayout.cs" Link="LabelPrintLayout.cs" />
+    <Compile Include="../../LabelPrintPages.cs" Link="LabelPrintPages.cs" />
+    <Compile Include="../../MeyertecProject.cs" Link="MeyertecProject.cs" />
+    <Compile Include="../../UndoRedo.cs" Link="UndoRedo.cs" />
+    <Compile Include="../../WstxIo.cs" Link="WstxIo.cs" />
+  </ItemGroup>
+</Project>

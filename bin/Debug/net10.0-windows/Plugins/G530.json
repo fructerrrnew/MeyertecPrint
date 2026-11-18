@@ -1,0 +1,12 @@
+{
+  "name": "G530",
+  "version": 1,
+  "manufacturer": "Godex",
+  "parameters": [
+    { "key": "resolution", "type": "fixed", "value": "300 dpi" },
+    { "key": "speed", "type": "fixed", "value": "4 in/s" },
+    { "key": "separator", "type": "select", "value": "0", "options": ["0", "1"] },
+    { "key": "mode", "type": "select", "value": "Прямая термопечать", "options": ["Прямая термопечать", "Термотрансферная"] },
+    { "key": "direction", "type": "select", "value": "0°", "options": ["0°", "90°", "180°", "270°"] }
+  ]
+}

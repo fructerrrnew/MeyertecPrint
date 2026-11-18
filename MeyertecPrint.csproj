@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>MeyertecPrint</RootNamespace>
+    <AssemblyName>MeyertecPrint</AssemblyName>
+    <Version>0.3.0-preview</Version>
+    <ApplicationIcon>IconsUI\Meyertec.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <PackageReference Include="ZXing.Net" Version="0.16.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="THIRD_PARTY_LICENSES.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Языковые файлы лежат рядом с exe в папке Languages,
+         туда можно добавлять новые *.json для других языков -->
+    <Content Include="Languages\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- JSON-плагины принтеров лежат рядом с exe в папке Plugins;
+         чтобы добавить принтер — положить новый *.json туда -->
+    <Content Include="Plugins\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Иконки кнопок рабочей панели лежат рядом с exe в папке IconsUI -->
+    <Content Include="IconsUI\*.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Каталог клемм (тестовые данные) лежит рядом с exe в папке cleat;
+         чтобы добавить клемму — запись в cleat.json + файл изображения -->
+    <Content Include="Catalog\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="cleat\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

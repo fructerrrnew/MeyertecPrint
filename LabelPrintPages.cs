@@ -1,0 +1,99 @@
+namespace MeyertecPrint;
+
+/// <summary>Подстановка CSV без изменения положения объектов и шаблона печати.</summary>
+public static class LabelPrintPages
+{
+    // Старые ячейки и преобразованные в объекты данные сохраняют свои
+    // номера столбцов. В новом пустом макете столбцы идут по порядку объектов.
+    public static List<CellContent> GetBindings(LabelLayout layout)
+    {
+        var cells = layout.Rows.SelectMany(row => row.Cells).Select(cell => cell.Content).ToList();
+        var objects = layout.Objects ?? new List<LabelObject>();
+        if (objects.Count == 0) return cells;
+        var hasLegacy = cells.Any(c => c.Type != CellContentType.Empty) || objects.Any(o => o.CsvColumn.HasValue);
+        if (!hasLegacy) return objects.Select(o => o.Content).ToList();
+        foreach (var obj in objects)
+        {
+            if (obj.CsvColumn is int column && column >= 0 && column < cells.Count && cells[column].Type == CellContentType.Empty)
+                cells[column] = obj.Content;
+            else
+                cells.Add(obj.Content);
+        }
+        return cells;
+    }
+
+    public static int CountImported(LabelLayout template, IEnumerable<LabelItem>? labels)
+    {
+        if (labels is null) return 0;
+        var count = GetBindings(template).Count;
+        return labels.Count(label => label?.Fields is not null && label.Fields.Keys.Any(key =>
+            key.Length > 1 && key[0] == 'C' && int.TryParse(key.AsSpan(1), out var index)
+                && index >= 0 && index < count && key == "C" + index));
+    }
+
+    public static bool ApplyFields(LabelLayout page, IReadOnlyDictionary<string, string> fields)
+    {
+        var contents = GetBindings(page);
+        for (var i = 0; i < contents.Count; i++)
+            if (fields.ContainsKey("C" + i) && contents[i].Type == CellContentType.Image)
+                throw new InvalidDataException(L10n.T("Print.CsvImage"));
+        var matched = false;
+        for (var i = 0; i < contents.Count; i++)
+        {
+            if (!fields.TryGetValue("C" + i, out var value)) continue;
+            value ??= string.Empty;
+            var content = contents[i];
+            matched = true;
+            switch (content.Type)
+            {
+                case CellContentType.Empty:
+                case CellContentType.Text:
+                    if (value.Length > 0) content.Type = CellContentType.Text;
+                    content.Text = value;
+                    break;
+                case CellContentType.Qr: content.Text = value; break;
+                case CellContentType.Barcode: content.BarcodeData = value; break;
+            }
+        }
+        return matched;
+    }
+
+    public static IReadOnlyList<LabelLayout> Create(LabelLayout template, IEnumerable<LabelItem>? labels, bool includeImported)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        return new PageCollection(template, includeImported ? labels : null);
+    }
+
+    // Clone only the requested page, so large batches do not allocate one layout per record.
+    private sealed class PageCollection : IReadOnlyList<LabelLayout>
+    {
+        private readonly LabelLayout _template;
+        private readonly List<Dictionary<string, string>> _records = new();
+        public PageCollection(LabelLayout template, IEnumerable<LabelItem>? labels)
+        {
+            _template = template.Clone();
+            if (labels is null) return;
+            var count = GetBindings(_template).Count;
+            foreach (var label in labels)
+            {
+                if (label?.Fields is null || !label.Fields.Keys.Any(key => key.Length > 1 && key[0] == 'C' &&
+                    int.TryParse(key.AsSpan(1), out var index) && index >= 0 && index < count && key == "C" + index)) continue;
+                _records.Add(new Dictionary<string, string>(label.Fields));
+            }
+        }
+        public int Count => 1 + _records.Count;
+        public LabelLayout this[int index]
+        {
+            get
+            {
+                if (index < 0 || index >= Count) throw new ArgumentOutOfRangeException(nameof(index));
+                var page = _template.Clone();
+                if (index > 0) ApplyFields(page, _records[index - 1]);
+                return page;
+            }
+        }
+        public IEnumerator<LabelLayout> GetEnumerator()
+        { for (var i = 0; i < Count; i++) yield return this[i]; }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+}

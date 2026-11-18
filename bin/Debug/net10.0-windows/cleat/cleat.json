@@ -1,0 +1,18 @@
+[
+    {
+        "type": "MTP",
+        "size": 1.5,
+        "image_path": "./1.5_push-in.png" 
+    },
+
+    {
+        "type": "MTP",
+        "size": 2.5,
+        "image_path": "./2.5_push-in.png" 
+    },
+    {
+        "type": "MTP",
+        "size": 4,
+        "image_path": "./4_push-in.png" 
+    }
+]

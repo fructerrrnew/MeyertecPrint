@@ -1,0 +1,5 @@
+[
+  {"type":"MTP","size":1.5,"model":"MTP-1.5","bodyLengthMm":46.5,"bodyWidthMm":3.5,"bodyHeightMm":32.3,"markerDimensionsVerified":false,"source":"https://owen.ru/uploads/497/re_mtp_1-ru-136252-1.5.pdf","image_path":"./1.5_push-in.png"},
+  {"type":"MTP","size":2.5,"model":"MTP-2.5","bodyLengthMm":48.5,"bodyWidthMm":5.2,"bodyHeightMm":36.5,"markerDimensionsVerified":false,"source":"https://meyertec.owen.ru/product/mtp_2_5","image_path":"./2.5_push-in.png"},
+  {"type":"MTP","size":4,"model":"MTP-4","bodyLengthMm":54,"bodyWidthMm":6.2,"bodyHeightMm":36.5,"markerDimensionsVerified":false,"source":"https://meyertec.owen.ru/product/mtp_4","image_path":"./4_push-in.png"}
+]
