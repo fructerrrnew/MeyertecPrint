@@ -52,6 +52,12 @@ public class CellContent
     /// <summary>Жирный для текста.</summary>
     public bool Bold { get; set; }
 
+    /// <summary>Размер шрифта ограничен указанным максимумом и подбирается по ширине и высоте.</summary>
+    public bool AutoFitText { get; set; }
+
+    /// <summary>Печать элемента в негативе в пределах его рамки.</summary>
+    public bool InvertColors { get; set; }
+
     /// <summary>Глубокое копирование содержимого (для снапшотов и разбивки).</summary>
     public CellContent Clone()
         => new()
@@ -65,6 +71,8 @@ public class CellContent
             FontName = FontName,
             FontSizePt = FontSizePt,
             Bold = Bold,
+            AutoFitText = AutoFitText,
+            InvertColors = InvertColors,
         };
 }
 

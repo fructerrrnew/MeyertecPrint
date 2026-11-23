@@ -1,15 +1,20 @@
 using System.Drawing.Printing;
+using System.IO.Ports;
 using System.Net.Sockets;
 
 namespace MeyertecPrint;
 
-/// <summary>Настройка задания в интерфейсе MEYERTEC. Передача — через установленный драйвер Windows.</summary>
+/// <summary>Настройка задания, транспорта и параметров подачи носителя.</summary>
 public sealed class PrintSettingsDialog : BrandForm
 {
     private readonly ComboBox _models = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+    private readonly ComboBox _backend = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly ComboBox _connection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly ComboBox _queues = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly TextBox _host = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _usb = new() { Dock = DockStyle.Fill };
+    private readonly ComboBox _serial = new() { Dock = DockStyle.Fill };
+    private readonly ComboBox _baud = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly Label _port = new()
     {
         Dock = DockStyle.Fill, AutoEllipsis = true, Height = 22, ForeColor = Theme.SecondaryText, UseMnemonic = false
@@ -28,10 +33,15 @@ public sealed class PrintSettingsDialog : BrandForm
         Dock = DockStyle.Fill, AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(0, 5, 0, 0)
     };
     private readonly Control _hostField;
+    private readonly Control _queueField, _portField, _usbField, _serialField, _baudField, _gapField;
+    private readonly Control _heatField, _stopField;
     private readonly TableLayoutPanel _range;
     private readonly NumericUpDown _width = Number(1, 300, 60), _height = Number(1, 762, 30);
     private readonly NumericUpDown _offsetX = Number(-50, 50, 0), _offsetY = Number(-50, 50, 0);
     private readonly NumericUpDown _copies = Number(1, 500, 1, 0);
+    private readonly NumericUpDown _heat = Number(0, 19, 10, 0), _stop = Number(0, 40, 0, 0);
+    private readonly NumericUpDown _gap = Number(0, 100, 0);
+    private readonly CheckBox _setHeat = new() { AutoSize = true }, _setStop = new() { AutoSize = true };
     private readonly CheckBox _imported = new() { AutoSize = true };
     private readonly NumericUpDown _from = Number(1, 1, 1, 0), _to = Number(1, 1, 1, 0);
     private readonly int _importedCount;
@@ -72,9 +82,12 @@ public sealed class PrintSettingsDialog : BrandForm
         BackColor = Theme.Surface;
 
         var printer = Section("Setup.PrinterSection");
-        Add(printer, 1, LabeledField("PrintSettings.Model", _models), LabeledField("Setup.Connection", _connection));
-        Add(printer, 2, LabeledField("Setup.Queue", _queues));
-        Add(printer, 3, LabeledField("Setup.Port", _port));
+        Add(printer, 1, LabeledField("PrintSettings.Model", _models), LabeledField("Godex.Backend", _backend));
+        Add(printer, 2, LabeledField("Setup.Connection", _connection));
+        _queueField = LabeledField("Setup.Queue", _queues);
+        _portField = LabeledField("Setup.Port", _port);
+        Add(printer, 3, _queueField);
+        Add(printer, 4, _portField);
         var hostLine = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
@@ -93,18 +106,28 @@ public sealed class PrintSettingsDialog : BrandForm
         hostLine.Controls.Add(_host, 0, 0);
         hostLine.Controls.Add(_test, 1, 0);
         _hostField = LabeledField("Setup.Host", hostLine);
-        Add(printer, 4, _hostField);
-        Add(printer, 5, _driverHint);
+        Add(printer, 5, _hostField);
+        _usbField = LabeledField("Godex.UsbId", _usb);
+        _serialField = LabeledField("Godex.SerialPort", _serial);
+        _baudField = LabeledField("Godex.Baud", _baud);
+        Add(printer, 6, _usbField);
+        Add(printer, 7, _serialField, _baudField);
+        Add(printer, 8, _driverHint);
 
         var job = Section("Setup.MediaSection");
         Add(job, 1, LabeledField("Setup.Width", _width), LabeledField("Setup.Height", _height));
         Add(job, 2, LabeledField("Setup.OffsetX", _offsetX), LabeledField("Setup.OffsetY", _offsetY));
         Add(job, 3, LabeledField("Setup.Copies", _copies));
-        _imported.Text = string.Format(L10n.T("Setup.Imported"), importedCount);
+        _heatField = OptionalField("Godex.Darkness", _setHeat, _heat);
+        _stopField = OptionalField("Godex.Stop", _setStop, _stop);
+        _gapField = LabeledField("Godex.Gap", _gap);
+        Add(job, 4, _heatField, _stopField);
+        Add(job, 5, _gapField);
+        _imported.Text = string.Format(L10n.T("Godex.AdditionalRecords"), importedCount);
         _imported.Checked = importedCount > 0;
         _imported.Margin = new Padding(0, 3, 0, 9);
         _imported.Visible = forPrint && importedCount > 0;
-        Add(job, 4, _imported);
+        Add(job, 6, _imported);
         _range = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
@@ -113,9 +136,9 @@ public sealed class PrintSettingsDialog : BrandForm
         _range.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         _range.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         Add(_range, 0, LabeledField("Setup.RangeFrom", _from), LabeledField("Setup.RangeTo", _to));
-        Add(job, 5, _range);
+        Add(job, 7, _range);
         _summary.Visible = forPrint;
-        Add(job, 6, _summary);
+        Add(job, 8, _summary);
         _imported.CheckedChanged += (_, _) => UpdateRange();
         _from.ValueChanged += (_, _) => UpdateSummary();
         _to.ValueChanged += (_, _) => UpdateSummary();
@@ -155,7 +178,8 @@ public sealed class PrintSettingsDialog : BrandForm
         foreach (var model in PrinterPlugins.All) _models.Items.Add(model.Name);
         if (_models.Items.Count > 0) _models.SelectedItem = project.PrinterModel ?? _models.Items[0];
         if (_models.SelectedIndex < 0 && _models.Items.Count > 0) _models.SelectedIndex = 0;
-        PopulateConnections(project.Print?.ConnectionKind);
+        PopulateBackends(_original.PrintBackend);
+        PopulateConnections(_original.ConnectionKind);
         try { foreach (string queue in PrinterSettings.InstalledPrinters) _queues.Items.Add(queue); }
         catch (Exception ex) when (ex is InvalidPrinterException or System.ComponentModel.Win32Exception) { }
         var saved = project.Print?.PrinterName;
@@ -166,6 +190,18 @@ public sealed class PrintSettingsDialog : BrandForm
             if (godex is not null) _queues.SelectedItem = godex;
         }
         _host.Text = project.Print?.NetworkHost ?? string.Empty;
+        _usb.Text = _original.UsbDevice ?? string.Empty;
+        try { _serial.Items.AddRange(SerialPort.GetPortNames().Cast<object>().ToArray()); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { }
+        _serial.Text = _original.SerialPort ?? string.Empty;
+        _baud.Items.AddRange(GodexPrintJob.BaudRates.Cast<object>().ToArray());
+        _baud.SelectedItem = GodexPrintJob.BaudRates.Contains(_original.SerialBaudRate) ? _original.SerialBaudRate : 9600;
+        _setHeat.Checked = _original.Temperature.HasValue;
+        _heat.Value = Math.Clamp(_original.Temperature ?? 10, 0, 19);
+        _setStop.Checked = _original.CutOffsetMm.HasValue;
+        _stop.Value = _original.CutOffsetMm is double stop && double.IsFinite(stop)
+            ? (decimal)Math.Clamp(Math.Round(stop), 0, 40) : 0;
+        _gap.Value = Math.Clamp(_original.MediaGapMm, 0, 100);
         _width.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaWidthUm), _width.Minimum, _width.Maximum);
         _height.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaHeightUm), _height.Minimum, _height.Maximum);
         _offsetX.Value = Math.Clamp((decimal)(project.Print?.OffsetXMm ?? 0), _offsetX.Minimum, _offsetX.Maximum);
@@ -174,7 +210,8 @@ public sealed class PrintSettingsDialog : BrandForm
         _updating = false;
         _queues.SelectedIndexChanged += (_, _) => UpdatePort(true);
         _connection.SelectedIndexChanged += (_, _) => UpdatePort(false);
-        _models.SelectedIndexChanged += (_, _) => { PopulateConnections((_connection.SelectedItem as ConnectionOption)?.Key); UpdatePort(true); };
+        _backend.SelectedIndexChanged += (_, _) => RefreshDestination();
+        _models.SelectedIndexChanged += (_, _) => RefreshDestination(refreshBackends: true);
         _host.TextChanged += (_, _) =>
         {
             _connectionRevision++;
@@ -250,6 +287,25 @@ public sealed class PrintSettingsDialog : BrandForm
         return pair;
     }
 
+    private static TableLayoutPanel OptionalField(string key, CheckBox check, NumericUpDown field)
+    {
+        check.Text = L10n.T(key);
+        check.Margin = new Padding(0, 0, 0, 4);
+        field.AccessibleName = check.Text;
+        field.Margin = Padding.Empty;
+        var pair = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 0, 0, 10)
+        };
+        pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pair.Controls.Add(check, 0, 0);
+        pair.Controls.Add(field, 0, 1);
+        check.CheckedChanged += (_, _) => field.Enabled = check.Checked;
+        field.Enabled = check.Checked;
+        return pair;
+    }
+
     private static void Add(TableLayoutPanel panel, int row, Control first, Control? second = null)
     {
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -268,28 +324,75 @@ public sealed class PrintSettingsDialog : BrandForm
         var model = PrinterPlugins.All.FirstOrDefault(x => x.Name == _models.SelectedItem as string);
         _connection.Items.Clear();
         if (model is null) return;
+        var direct = SelectedBackend == GodexPrintJob.DirectBackend;
         foreach (var key in model.Connections.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (string.Equals(key, "usb", StringComparison.OrdinalIgnoreCase)) _connection.Items.Add(new ConnectionOption("usb", "USB-B"));
-            if (string.Equals(key, "ethernet", StringComparison.OrdinalIgnoreCase)) _connection.Items.Add(new ConnectionOption("ethernet", "Ethernet"));
+            switch (key.ToLowerInvariant())
+            {
+                case "usb" when !direct: _connection.Items.Add(new ConnectionOption("usb", "USB-B")); break;
+                case "ethernet": _connection.Items.Add(new ConnectionOption("ethernet", "RJ45 / Ethernet")); break;
+                case "serial": _connection.Items.Add(new ConnectionOption("serial", "RS-232")); break;
+            }
         }
         var match = _connection.Items.Cast<ConnectionOption>().FirstOrDefault(x => x.Key == preferred);
         if (match is not null) _connection.SelectedItem = match;
         else if (_connection.Items.Count > 0) _connection.SelectedIndex = 0;
     }
 
+    private string SelectedBackend => (_backend.SelectedItem as ConnectionOption)?.Key ?? GodexPrintJob.DriverBackend;
+
+    private void PopulateBackends(string preferred)
+    {
+        _backend.Items.Clear();
+        _backend.Items.Add(new ConnectionOption(GodexPrintJob.DriverBackend, L10n.T("Godex.Driver")));
+        if (string.Equals(_models.SelectedItem as string, "G530", StringComparison.OrdinalIgnoreCase))
+        {
+            _backend.Items.Add(new ConnectionOption(GodexPrintJob.SdkBackend, "GoDEX SDK (EZio)"));
+            _backend.Items.Add(new ConnectionOption(GodexPrintJob.DirectBackend, L10n.T("Godex.Direct")));
+        }
+        _backend.SelectedItem = _backend.Items.Cast<ConnectionOption>().FirstOrDefault(item => item.Key == preferred)
+            ?? _backend.Items[0];
+    }
+
+    private void RefreshDestination(bool refreshBackends = false)
+    {
+        if (_updating) return;
+        var connection = (_connection.SelectedItem as ConnectionOption)?.Key;
+        var backend = SelectedBackend;
+        _updating = true;
+        try
+        {
+            if (refreshBackends) PopulateBackends(backend);
+            PopulateConnections(connection);
+        }
+        finally { _updating = false; }
+        UpdatePort(false);
+    }
+
     private void UpdatePort(bool updateHost)
     {
         if (_updating) return;
         _connectionRevision++;
-        var ethernet = (_connection.SelectedItem as ConnectionOption)?.Key == "ethernet";
+        var driver = SelectedBackend == GodexPrintJob.DriverBackend;
+        var sdk = SelectedBackend == GodexPrintJob.SdkBackend;
+        var connection = (_connection.SelectedItem as ConnectionOption)?.Key;
+        var ethernet = connection == "ethernet";
+        var serial = connection == "serial";
+        var sdkUsb = sdk && connection == "usb";
+        _queueField.Visible = driver || sdkUsb;
+        _portField.Visible = driver;
+        _usbField.Visible = sdkUsb;
+        _serialField.Visible = _baudField.Visible = serial && !driver;
         _hostField.Visible = ethernet;
+        _gapField.Visible = _heatField.Visible = _stopField.Visible = !driver;
         _test.Enabled = ethernet && !_testing;
-        var port = PrinterQueues.GetPort(_queues.SelectedItem as string ?? string.Empty);
+        var port = driver ? PrinterQueues.GetPort(_queues.SelectedItem as string ?? string.Empty) : string.Empty;
         _port.Text = string.IsNullOrEmpty(port) ? "—" : port;
-        if (updateHost && ethernet) _host.Text = PrinterQueues.GetNetworkHost(port);
-        _driverHint.Text = L10n.T(ethernet ? "Setup.NetworkHint" : "Setup.DriverHint");
-        ShowStatus(_queues.Items.Count == 0 ? L10n.T("Setup.NoQueues") : string.Empty, error: _forPrint);
+        if (updateHost && driver && ethernet) _host.Text = PrinterQueues.GetNetworkHost(port);
+        _driverHint.Text = L10n.T(driver
+            ? ethernet ? "Setup.NetworkHint" : serial ? "Godex.DriverSerialHint" : "Setup.DriverHint"
+            : sdkUsb ? "Godex.SdkUsbHint" : serial ? sdk ? "Godex.SdkSerialPort" : "Godex.SerialHint" : "Godex.DirectHint");
+        ShowStatus(driver && _queues.Items.Count == 0 ? L10n.T("Setup.NoQueues") : string.Empty, error: _forPrint);
     }
 
     private void ShowStatus(string message, bool error = false, Control? field = null)
@@ -316,7 +419,7 @@ public sealed class PrintSettingsDialog : BrandForm
         {
             using var client = new TcpClient();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await client.ConnectAsync(address, 9100, timeout.Token);
+            await client.ConnectAsync(address, GodexPrintJob.NetworkPort, timeout.Token);
             if (!IsDisposed && revision == _connectionRevision) ShowStatus(L10n.T("Setup.Reachable"));
         }
         catch (Exception ex) when (ex is SocketException or OperationCanceledException or ArgumentException)
@@ -354,8 +457,10 @@ public sealed class PrintSettingsDialog : BrandForm
                 error: true, field: invalidWidth ? _width : _height);
             return;
         }
+        var backend = SelectedBackend;
+        var driver = backend == GodexPrintJob.DriverBackend;
         var queue = _queues.SelectedItem as string;
-        if (_forPrint && string.IsNullOrWhiteSpace(queue))
+        if (_forPrint && driver && string.IsNullOrWhiteSpace(queue))
         {
             ShowStatus(L10n.T(_queues.Items.Count == 0 ? "Setup.NoQueues" : "Setup.ChooseQueue"), error: true, field: _queues);
             return;
@@ -363,21 +468,34 @@ public sealed class PrintSettingsDialog : BrandForm
         if (_forPrint && (double)_width.Value > plugin.MaxPrintWidthMm &&
             BrandMessageBox.Show(this, string.Format(L10n.T("Setup.WideMedia"), plugin.MaxPrintWidthMm),
                 Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        if (_connection.SelectedItem is not ConnectionOption)
+        if (_connection.SelectedItem is not ConnectionOption connection)
         {
             ShowStatus(L10n.T("Setup.NoConnection"), error: true, field: _connection);
             return;
         }
-        var ethernet = (_connection.SelectedItem as ConnectionOption)?.Key == "ethernet";
-        if (!ethernet && !string.IsNullOrEmpty(queue) && !string.IsNullOrEmpty(PrinterQueues.GetNetworkHost(PrinterQueues.GetPort(queue))))
+        var ethernet = connection.Key == "ethernet";
+        var port = driver && queue is not null ? PrinterQueues.GetPort(queue) : string.Empty;
+        var serial = port.StartsWith("COM", StringComparison.OrdinalIgnoreCase) &&
+                     int.TryParse(port[3..].TrimEnd(':'), out _);
+        if (driver && queue is not null && connection.Key == "serial" && !serial)
+        {
+            ShowStatus(L10n.T("Godex.DriverSerialHint"), error: true, field: _queues);
+            return;
+        }
+        if (driver && connection.Key == "usb" && (serial || !string.IsNullOrEmpty(PrinterQueues.GetNetworkHost(port))))
         {
             ShowStatus(L10n.T("Setup.UsbMismatch"), error: true, field: _queues);
             return;
         }
         var host = _host.Text.Trim();
-        if (ethernet && !string.IsNullOrEmpty(queue))
+        if (driver && ethernet && !string.IsNullOrEmpty(queue))
         {
-            var match = PrinterQueues.CompareNetworkHost(PrinterQueues.GetPort(queue), host);
+            if (serial)
+            {
+                ShowStatus(L10n.T("Godex.DriverEthernetMismatch"), error: true, field: _queues);
+                return;
+            }
+            var match = PrinterQueues.CompareNetworkHost(port, host);
             if (match == PrinterQueues.HostMatch.Mismatch)
             {
                 ShowStatus(L10n.T("Setup.HostMismatch"), error: true, field: _host);
@@ -387,11 +505,35 @@ public sealed class PrintSettingsDialog : BrandForm
                 BrandMessageBox.Show(this, L10n.T("Setup.QueueUnverified"), Text,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         }
+        var settings = new PrintSettings
+        {
+            PrintBackend = backend,
+            PrinterName = driver || backend == GodexPrintJob.SdkBackend && connection.Key == "usb" ? queue : null,
+            ConnectionKind = connection.Key,
+            NetworkHost = ethernet ? host : null,
+            SerialPort = connection.Key == "serial" && !driver ? _serial.Text.Trim() : null,
+            SerialBaudRate = _baud.SelectedItem is int baud ? baud : 9600,
+            UsbDevice = backend == GodexPrintJob.SdkBackend && connection.Key == "usb" ? _usb.Text.Trim() : null,
+            OffsetXMm = (double)_offsetX.Value, OffsetYMm = (double)_offsetY.Value,
+            Copies = (int)_copies.Value, Temperature = _setHeat.Checked ? (int)_heat.Value : null,
+            CutOffsetMm = _setStop.Checked ? (double)_stop.Value : null, MediaGapMm = _gap.Value
+        };
+        if (!driver)
+        {
+            try
+            {
+                GodexPrintJob.ValidateParameters(settings);
+                if (_forPrint) GodexPrintJob.ValidateConnection(settings);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or PlatformNotSupportedException)
+            {
+                ShowStatus(ex.Message, error: true);
+                return;
+            }
+        }
         if (_forPrint && BrandMessageBox.Show(this, L10n.T("Setup.ConfirmMedia"), Text,
             MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        Result = new PrintSettings { PrinterName = queue, ConnectionKind = ethernet ? "ethernet" : "usb",
-            NetworkHost = ethernet ? host : null, OffsetXMm = (double)_offsetX.Value, OffsetYMm = (double)_offsetY.Value,
-            Copies = (int)_copies.Value, Temperature = _original.Temperature, CutOffsetMm = _original.CutOffsetMm };
+        Result = settings;
         DialogResult = DialogResult.OK;
         Close();
     }

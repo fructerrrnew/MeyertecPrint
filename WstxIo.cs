@@ -141,6 +141,7 @@ public static class WstxIo
         var content = new CellContent();
         var node = cellNode.SelectSingleNode("Content");
         if (node is null) return content;
+        content.InvertColors = string.Equals(GetAttr(node, "MeyertecInvert"), "True", StringComparison.OrdinalIgnoreCase);
 
         if (node.SelectSingleNode("TextContent/Value") is { } text)
         {
@@ -150,11 +151,15 @@ public static class WstxIo
             if (node.SelectSingleNode("TextContent/TextAttributes") is { } attrs)
             {
                 var font = GetAttr(attrs, "Font");
-                if (!string.IsNullOrEmpty(font))
+                if (!string.IsNullOrEmpty(font) &&
+                    !string.Equals(GetAttr(attrs, "MeyertecDefaultFont"), "True", StringComparison.OrdinalIgnoreCase))
                     content.FontName = font;
                 var size = GetAttr(attrs, "Size");
                 if (int.TryParse(size, out var sizeHundredthPt))
                     content.FontSizePt = sizeHundredthPt / 100f;
+                if (string.Equals(GetAttr(attrs, "MeyertecAutomaticSize"), "True", StringComparison.OrdinalIgnoreCase))
+                    content.FontSizePt = null;
+                content.AutoFitText = string.Equals(GetAttr(attrs, "MeyertecAutoFit"), "True", StringComparison.OrdinalIgnoreCase);
                 content.Bold = string.Equals(GetAttr(attrs, "Bold"), "True",
                     StringComparison.OrdinalIgnoreCase);
             }
@@ -277,6 +282,7 @@ public static class WstxIo
     private static void WriteContent(XmlWriter writer, CellContent content)
     {
         writer.WriteStartElement("Content");
+        if (content.InvertColors) writer.WriteAttributeString("MeyertecInvert", "True");
         switch (content.Type)
         {
             case CellContentType.Text:
@@ -285,10 +291,13 @@ public static class WstxIo
                 writer.WriteStartElement("TextAttributes");
                 writer.WriteAttributeString("Font",
                     string.IsNullOrEmpty(content.FontName) ? "Arial" : content.FontName);
+                if (string.IsNullOrEmpty(content.FontName)) writer.WriteAttributeString("MeyertecDefaultFont", "True");
                 // Размер в сотых pt (12 pt = 1200)
                 writer.WriteAttributeString("Size",
                     ((int)Math.Round((content.FontSizePt ?? 12f) * 100f)).ToString());
                 writer.WriteAttributeString("Bold", content.Bold ? "True" : "False");
+                if (content.AutoFitText) writer.WriteAttributeString("MeyertecAutoFit", "True");
+                if (!content.FontSizePt.HasValue) writer.WriteAttributeString("MeyertecAutomaticSize", "True");
                 writer.WriteAttributeString("Color", "000000");
                 writer.WriteAttributeString("Align", "Center");
                 writer.WriteEndElement();

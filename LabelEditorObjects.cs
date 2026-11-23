@@ -13,6 +13,7 @@ public partial class LabelEditorControl
     private LabelObject? _copiedObject;
     private NumericUpDown _objectX = null!, _objectY = null!, _objectWidth = null!, _objectHeight = null!;
     private ComboBox _zoomBox = null!;
+    private CheckBox _invertColors = null!;
     private Button _calibrateButton = null!, _editObjectButton = null!, _deleteObjectButton = null!;
     private TableLayoutPanel _objectFields = null!;
     private Label _objectEmpty = null!, _objectUnitLabel = null!;
@@ -46,15 +47,27 @@ public partial class LabelEditorControl
         };
         _objectFields.Controls.Add(_objectUnitLabel, 0, 5);
         _objectFields.SetColumnSpan(_objectUnitLabel, 2);
+        _invertColors = new CheckBox { Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0, 2, 0, 7) };
+        _invertColors.CheckedChanged += (_, _) =>
+        {
+            if (_updatingObjectFields || _selectedObject is not { } item ||
+                item.Content.InvertColors == _invertColors.Checked) return;
+            _undo.Push(_layout);
+            item.Content.InvertColors = _invertColors.Checked;
+            InvalidateCanvas();
+            LayoutChanged?.Invoke();
+        };
+        _objectFields.Controls.Add(_invertColors, 0, 6);
+        _objectFields.SetColumnSpan(_invertColors, 2);
         _editObjectButton = new Button { Dock = DockStyle.Fill, Height = 34, Margin = new Padding(0, 0, 0, 8) };
         Theme.StyleButton(_editObjectButton);
         _editObjectButton.Click += (_, _) => EditSelectedObject();
-        _objectFields.Controls.Add(_editObjectButton, 0, 6);
+        _objectFields.Controls.Add(_editObjectButton, 0, 7);
         _objectFields.SetColumnSpan(_editObjectButton, 2);
         _deleteObjectButton = new Button { Dock = DockStyle.Fill, Height = 34, Margin = Padding.Empty };
         Theme.StyleButton(_deleteObjectButton);
         _deleteObjectButton.Click += (_, _) => DeleteSelectedObject();
-        _objectFields.Controls.Add(_deleteObjectButton, 0, 7);
+        _objectFields.Controls.Add(_deleteObjectButton, 0, 8);
         _objectFields.SetColumnSpan(_deleteObjectButton, 2);
         _objectEmpty = new Label
         {
@@ -103,6 +116,7 @@ public partial class LabelEditorControl
         _calibrateButton.Text = L10n.T("Object.Calibrate");
         _deleteObjectButton.Text = L10n.T("Object.Delete");
         _editObjectButton.Text = L10n.T("Object.Edit");
+        _invertColors.Text = L10n.T("Object.InvertColors");
         _objectEmpty.Text = L10n.T("Object.NoSelection");
         _zoomBox.Items[0] = L10n.T("Editor.Fit");
         _zoomBox.AccessibleName = L10n.T("Object.Zoom");
@@ -388,9 +402,8 @@ public partial class LabelEditorControl
         var position = LabelPrintLayout.Create(_layout).Cells.First(c => c.Row == row && c.Column == column);
         var content = _layout.Rows[row].Cells[column].Content.Clone();
         long width = position.Width, height = position.Height;
-        if (content.Type == CellContentType.Text)
+        if (content.Type == CellContentType.Text && !content.AutoFitText && content.FontSizePt.HasValue && !content.InvertColors)
         {
-            content.FontSizePt ??= Math.Max(6f, (float)(Units.UmToMm(height) * 0.35 * 72 / 25.4));
             using var bmp = new Bitmap(1, 1);
             bmp.SetResolution(300, 300);
             using var g = Graphics.FromImage(bmp);
@@ -400,8 +413,8 @@ public partial class LabelEditorControl
             width = Math.Min(width, Math.Max(1000, Units.MmToUm(measured.Width * 25.4 / 300 + 1)));
             height = Math.Min(height, Math.Max(1000, Units.MmToUm(measured.Height * 25.4 / 300 + 1)));
         }
-        else if (content.Type == CellContentType.Qr) width = height = Math.Min(width, height);
-        else if (content.Type == CellContentType.Image && !string.IsNullOrEmpty(content.ImageBase64))
+        else if (content.Type == CellContentType.Qr && !content.InvertColors) width = height = Math.Min(width, height);
+        else if (content.Type == CellContentType.Image && !content.InvertColors && !string.IsNullOrEmpty(content.ImageBase64))
         {
             try
             {
@@ -444,6 +457,7 @@ public partial class LabelEditorControl
         };
         var content = AskForContent(tool, original);
         if (content is null) return;
+        content.InvertColors = original.InvertColors;
         _undo.Push(_layout.Clone());
         var target = obj ?? ConvertLegacy(cell!.Value.Row, cell.Value.Col);
         target.Content = content;
@@ -493,7 +507,8 @@ public partial class LabelEditorControl
             if (dialog.ShowDialog(FindForm()) != DialogResult.OK || input.Text.Length == 0) return null;
             return new CellContent { Type = CellContentType.Text, Text = input.Text,
                 FontName = original is null ? SelectedFontName : original.FontName,
-                FontSizePt = original?.FontSizePt ?? (float)_fontSizeBox.Value, Bold = original?.Bold ?? _bold };
+                FontSizePt = original is null ? (float)_fontSizeBox.Value : original.FontSizePt,
+                Bold = original?.Bold ?? _bold, AutoFitText = original?.AutoFitText ?? _autoFitText };
         }
         if (tool == EditorTool.Qr)
         {
@@ -562,6 +577,7 @@ public partial class LabelEditorControl
         }
         if (_selectedObject is { } obj)
         {
+            _invertColors.Checked = obj.Content.InvertColors;
             var vals = new[] { obj.XUm + Units.MmToUm(_displayPrintSettings.OffsetXMm),
                 obj.YUm + Units.MmToUm(_displayPrintSettings.OffsetYMm), obj.WidthUm, obj.HeightUm };
             for (var i = 0; i < fields.Length; i++)

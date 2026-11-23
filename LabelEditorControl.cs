@@ -26,6 +26,7 @@ public partial class LabelEditorControl : UserControl
     private bool _unitInch;
     private bool _updatingTextOpts;
     private bool _bold;
+    private bool _autoFitText = true;
     private EditorTool _tool = EditorTool.Select;
     private LabelLayout? _editSnapshot;
     private readonly UndoRedo _undo = new();
@@ -55,6 +56,7 @@ public partial class LabelEditorControl : UserControl
     private string? _unavailableFont;
     private readonly NumericUpDown _fontSizeBox;
     private readonly CheckBox _boldButton;
+    private readonly CheckBox _autoFitButton;
     private readonly Label _unitLabel;
     private readonly Panel _canvasPanel;
     private readonly TextBox _inlineBox;
@@ -258,12 +260,22 @@ public partial class LabelEditorControl : UserControl
         };
         _fontBox.SelectedIndexChanged += (_, _) => OnTextOptionsChanged();
         _fontSizeBox.ValueChanged += (_, _) => OnTextOptionsChanged();
+        _autoFitButton = new CheckBox
+        {
+            AutoSize = true, Checked = true, Margin = new Padding(6, 6, 4, 0),
+        };
+        _autoFitButton.CheckedChanged += (_, _) =>
+        {
+            _autoFitText = _autoFitButton.Checked;
+            OnTextOptionsChanged();
+        };
 
         _textOptions.Controls.Add(OptionLabel("TextOpts.Font"));
         _textOptions.Controls.Add(_fontBox);
         _textOptions.Controls.Add(OptionLabel("TextOpts.Size"));
         _textOptions.Controls.Add(_fontSizeBox);
         _textOptions.Controls.Add(_boldButton);
+        _textOptions.Controls.Add(_autoFitButton);
         _fieldKeys.Add(_fontBox, "TextOpts.Font");
         _fieldKeys.Add(_fontSizeBox, "TextOpts.Size");
 
@@ -487,6 +499,8 @@ public partial class LabelEditorControl : UserControl
                         FontName = cell.Content.FontName,
                         FontSizePt = cell.Content.FontSizePt,
                         Bold = cell.Content.Bold,
+                        AutoFitText = cell.Content.AutoFitText,
+                        InvertColors = cell.Content.InvertColors,
                     };
                     changed = true;
                 }
@@ -769,20 +783,7 @@ public partial class LabelEditorControl : UserControl
                 newRow.Cells.Add(new LabelCell
                 {
                     WidthUm = layout.Geometry.WidthUm,
-                    Content = cell.Content is { Type: not CellContentType.Empty }
-                        ? new CellContent
-                        {
-                            Type = cell.Content.Type,
-                            Text = cell.Content.Text,
-                            BarcodeData = cell.Content.BarcodeData,
-                            BarcodeSymbol = cell.Content.BarcodeSymbol,
-                            ImageBase64 = cell.Content.ImageBase64,
-                            ImageFormat = cell.Content.ImageFormat,
-                            FontName = cell.Content.FontName,
-                            FontSizePt = cell.Content.FontSizePt,
-                            Bold = cell.Content.Bold,
-                        }
-                        : new CellContent(),
+                    Content = cell.Content.Clone(),
                 });
             }
             layout.Rows.Add(newRow);
@@ -937,6 +938,7 @@ public partial class LabelEditorControl : UserControl
         UpdateToolStates();
         _boldButton.AccessibleName = L10n.T("TextOpts.Bold");
         _tips.SetToolTip(_boldButton, _boldButton.AccessibleName);
+        _autoFitButton.Text = L10n.T("TextOpts.AutoFit");
         ApplyObjectStrings();
         UpdateContextBar();
         InvalidateCanvas();
@@ -1061,6 +1063,8 @@ public partial class LabelEditorControl : UserControl
             FontName = SelectedFontName,
             FontSizePt = (float)_fontSizeBox.Value,
             Bold = _bold,
+            AutoFitText = _autoFitText,
+            InvertColors = cell.Content.InvertColors,
         };
         SelectCell(row, col);
     }
@@ -1076,6 +1080,7 @@ public partial class LabelEditorControl : UserControl
             selected.Content.FontName = SelectedFontName;
             selected.Content.FontSizePt = (float)_fontSizeBox.Value;
             selected.Content.Bold = _bold;
+            selected.Content.AutoFitText = _autoFitText;
             InvalidateCanvas();
             LayoutChanged?.Invoke();
             return;
@@ -1097,6 +1102,8 @@ public partial class LabelEditorControl : UserControl
             FontName = SelectedFontName,
             FontSizePt = (float)_fontSizeBox.Value,
             Bold = _bold,
+            AutoFitText = _autoFitText,
+            InvertColors = cell.Content.InvertColors,
         };
         if (_inlineBox.Visible)
         {
@@ -1136,6 +1143,7 @@ public partial class LabelEditorControl : UserControl
             if (!float.IsFinite(size)) size = 12;
             _fontSizeBox.Value = (decimal)Math.Clamp(MathF.Round(size), (float)_fontSizeBox.Minimum, (float)_fontSizeBox.Maximum);
             _bold = content.Bold;
+            _autoFitButton.Checked = content.AutoFitText || !content.FontSizePt.HasValue;
         }
         finally
         {

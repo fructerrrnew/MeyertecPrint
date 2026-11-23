@@ -282,6 +282,58 @@ public static class SelfTest
         }
         finally { File.Delete(mprjPath); File.Delete(wstxPath); }
 
+        var fittedText = new CellContent
+        {
+            Type = CellContentType.Text, Text = "XT-01234567890123456789",
+            FontSizePt = 16, AutoFitText = true, InvertColors = true
+        };
+        var fittedLayout = alternate.Clone();
+        fittedLayout.Objects.Add(new LabelObject
+        {
+            XUm = 1000, YUm = 1000, WidthUm = 12000, HeightUm = 5000, Content = fittedText
+        });
+        using (var raster = LabelPrintRenderer.Render(fittedLayout, new PrintSettings(), 300, 300, validateForPrint: true))
+        {
+            Check("print: подгонка текста и инверсия в рамке элемента",
+                raster.GetPixel(13, 13).R < 128 && raster.GetPixel(0, 0).R > 240);
+        }
+        using (var source = new Bitmap(1, 1))
+        using (var png = new MemoryStream())
+        {
+            source.SetPixel(0, 0, Color.Red);
+            source.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            var imageLayout = alternate.Clone();
+            imageLayout.Objects.Add(new LabelObject
+            {
+                XUm = 1000, YUm = 1000, WidthUm = 10000, HeightUm = 5000,
+                Content = new CellContent
+                {
+                    Type = CellContentType.Image, ImageBase64 = Convert.ToBase64String(png.ToArray()), InvertColors = true
+                }
+            });
+            using var raster = LabelPrintRenderer.Render(imageLayout, new PrintSettings(), 300, 300);
+            var pixel = raster.GetPixel(71, 41);
+            Check("print: инверсия изображения и фона рамки",
+                pixel.R < 128 && pixel.G > 128 && pixel.B > 128 &&
+                raster.GetPixel(13, 13).R < 128 && raster.GetPixel(0, 0).R > 240);
+        }
+        var manual = fittedLayout.Clone();
+        manual.Objects[0].Content.AutoFitText = false;
+        var manualOverflow = false;
+        try { using var raster = LabelPrintRenderer.Render(manual, new PrintSettings(), 300, 300, validateForPrint: true); }
+        catch (InvalidDataException) { manualOverflow = true; }
+        Check("print: ручной шрифт сверх рамки отклоняется", manualOverflow);
+        Check("strip: длина учитывает межэтикеточный зазор", LabelSequence.CalculateLengthUm(30000, 3, 2000) == 94000);
+        try
+        {
+            WstxIo.Write("raster formatting", fittedLayout, wstxPath);
+            var (_, restored) = WstxIo.Read(wstxPath);
+            var formatting = restored.Objects[0].Content;
+            Check("wstx: подгонка, инверсия и шрифт по умолчанию",
+                formatting.AutoFitText && formatting.InvertColors && formatting.FontName is null && formatting.FontSizePt == 16);
+        }
+        finally { File.Delete(wstxPath); }
+
         // ---- 10. Раскладка редактора (headless: форму не показываем) ----
         // Защита от регрессии: редактор обязан занимать вкладку целиком,
         // иначе холст сжимается до нуля (Dock.Fill теряется).

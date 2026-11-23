@@ -1,4 +1,6 @@
 using System.Drawing.Printing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 namespace MeyertecPrint;
 
@@ -69,41 +71,10 @@ public sealed class PrintProgressDialog : BrandForm
         try
         {
             var token = _cancel.Token;
-            using var document = new PrintDocument { OriginAtMargins = false, PrintController = new StandardPrintController() };
-            document.PrinterSettings.PrinterName = _settings.PrinterName ?? string.Empty;
-            if (!document.PrinterSettings.IsValid) throw new InvalidPrinterException(document.PrinterSettings);
-            MainForm.SetLabelPaper(document, _pages[_start]);
-            document.PrinterSettings.Copies = 1;
-            var resolution = document.DefaultPageSettings.PrinterResolution;
-            var dpiX = resolution.X >= 72 ? resolution.X : _plugin?.ResolutionDpi ?? 300;
-            var dpiY = resolution.Y >= 72 ? resolution.Y : _plugin?.ResolutionDpi ?? 300;
-            for (var i = 0; i < _count; i++)
-            {
-                token.ThrowIfCancellationRequested();
-                try
-                {
-                    var page = _pages[_start + i];
-                    if (_plugin is not null) LabelPrintLayout.EnsurePrintWidth(page, _plugin.MaxPrintWidthMm);
-                    using var bitmap = LabelPrintRenderer.Render(page, _settings, dpiX, dpiY, validateForPrint: true);
-                }
-                catch (InvalidDataException ex)
-                { throw new InvalidDataException(string.Format(L10n.T("Print.PageError"), _start + i + 1, ex.Message), ex); }
-                Report("Print.CheckingProgress", i + 1, _count);
-            }
-            token.ThrowIfCancellationRequested();
-            long index = 0, total = (long)_count * _settings.Copies;
-            document.PrintPage += (_, e) =>
-            {
-                if (token.IsCancellationRequested) { e.Cancel = true; e.HasMorePages = false; return; }
-                var graphics = e.Graphics ?? throw new InvalidDataException(L10n.T("Print.InvalidGraphics"));
-                var page = _pages[_start + (int)(index % _count)];
-                using var bitmap = LabelPrintRenderer.Render(page, _settings, graphics.DpiX, graphics.DpiY, validateForPrint: true);
-                LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY);
-                index++;
-                Report("Print.SpoolProgress", index, total);
-                e.HasMorePages = index < total;
-            };
-            document.Print();
+            if (_settings.PrintBackend == GodexPrintJob.DriverBackend)
+                PrintUsingDriver(token);
+            else
+                PrintUsingGodex(token);
             token.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) { cancelled = true; }
@@ -118,6 +89,76 @@ public sealed class PrintProgressDialog : BrandForm
             }));
         }
         catch (InvalidOperationException) { }
+    }
+
+    private void PrintUsingGodex(CancellationToken token)
+    {
+        var selected = _pages.Skip(_start).Take(_count).ToArray();
+        var progress = new Progress<(long Done, long Total)>(page => Report("Print.SpoolProgress", page.Done, page.Total));
+        GodexPrintJob.SendAsync(_settings, selected, RenderMonochrome, progress, token).GetAwaiter().GetResult();
+    }
+
+    private static GodexRaster RenderMonochrome(LabelLayout layout, PrintSettings settings, int dpi)
+    {
+        using var bitmap = LabelPrintRenderer.Render(layout, settings, dpi, dpi, validateForPrint: true);
+        var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb);
+        try
+        {
+            var pixels = new byte[bitmap.Width * 4];
+            var row = -1;
+            return GodexRaster.Create(bitmap.Width, bitmap.Height, (x, y) =>
+            {
+                if (row != y)
+                {
+                    Marshal.Copy(data.Scan0 + y * data.Stride, pixels, 0, pixels.Length);
+                    row = y;
+                }
+                var index = x * 4;
+                return pixels[index + 3] >= 128 &&
+                    29 * pixels[index] + 150 * pixels[index + 1] + 77 * pixels[index + 2] < 128 * 256;
+            });
+        }
+        finally { bitmap.UnlockBits(data); }
+    }
+
+    private void PrintUsingDriver(CancellationToken token)
+    {
+        using var document = new PrintDocument { OriginAtMargins = false, PrintController = new StandardPrintController() };
+        document.PrinterSettings.PrinterName = _settings.PrinterName ?? string.Empty;
+        if (!document.PrinterSettings.IsValid) throw new InvalidPrinterException(document.PrinterSettings);
+        MainForm.SetLabelPaper(document, _pages[_start]);
+        document.PrinterSettings.Copies = 1;
+        var resolution = document.DefaultPageSettings.PrinterResolution;
+        var dpiX = resolution.X >= 72 ? resolution.X : _plugin?.ResolutionDpi ?? 300;
+        var dpiY = resolution.Y >= 72 ? resolution.Y : _plugin?.ResolutionDpi ?? 300;
+        for (var i = 0; i < _count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                var page = _pages[_start + i];
+                if (_plugin is not null) LabelPrintLayout.EnsurePrintWidth(page, _plugin.MaxPrintWidthMm);
+                using var bitmap = LabelPrintRenderer.Render(page, _settings, dpiX, dpiY, validateForPrint: true);
+            }
+            catch (InvalidDataException ex)
+            { throw new InvalidDataException(string.Format(L10n.T("Print.PageError"), _start + i + 1, ex.Message), ex); }
+            Report("Print.CheckingProgress", i + 1, _count);
+        }
+        token.ThrowIfCancellationRequested();
+        long index = 0, total = (long)_count * _settings.Copies;
+        document.PrintPage += (_, e) =>
+        {
+            if (token.IsCancellationRequested) { e.Cancel = true; e.HasMorePages = false; return; }
+            var graphics = e.Graphics ?? throw new InvalidDataException(L10n.T("Print.InvalidGraphics"));
+            var page = _pages[_start + (int)(index % _count)];
+            using var bitmap = LabelPrintRenderer.Render(page, _settings, graphics.DpiX, graphics.DpiY, validateForPrint: true);
+            LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY);
+            index++;
+            Report("Print.SpoolProgress", index, total);
+            e.HasMorePages = index < total;
+        };
+        document.Print();
     }
     protected override void Dispose(bool disposing) { if (disposing) _cancel.Dispose(); base.Dispose(disposing); }
 }

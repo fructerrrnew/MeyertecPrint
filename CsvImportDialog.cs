@@ -1,6 +1,6 @@
 namespace MeyertecPrint;
 
-/// <summary>CSV preview and explicit source-column to label-field mapping.</summary>
+/// <summary>Spreadsheet preview and explicit source-column to label-field mapping.</summary>
 public sealed class CsvImportDialog : BrandForm
 {
     private const int PreviewLimit = 100;
@@ -19,11 +19,14 @@ public sealed class CsvImportDialog : BrandForm
     private readonly CheckBox _headers = new() { AutoSize = true };
     private readonly SplitContainer _split;
     private readonly ComboBox _encoding = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 218 };
+    private readonly ComboBox _worksheet = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 218, Visible = false };
+    private readonly Label _encodingLabel = new() { AutoSize = true, Margin = new Padding(0, 6, 8, 0) };
+    private readonly Label _worksheetLabel = new() { AutoSize = true, Margin = new Padding(0, 6, 8, 0), Visible = false };
     private readonly Button _ok = new() { Width = 110, Enabled = false };
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 38, ForeColor = Theme.SecondaryText, UseMnemonic = false };
     private readonly IReadOnlyList<CellContent> _targets;
     private readonly List<(int Target, ComboBox Selector)> _selectors = new();
-    private CsvReader.Result? _parsed;
+    private List<List<string>>? _parsed;
     public string FilePath { get; private set; } = string.Empty;
     public List<List<string>> DataRows { get; private set; } = new();
     public Dictionary<int, int> TargetColumns { get; private set; } = new();
@@ -65,11 +68,15 @@ public sealed class CsvImportDialog : BrandForm
             Dock = DockStyle.Top, Height = 40, Padding = new Padding(16, 4, 0, 0), WrapContents = false
         };
         _encoding.AccessibleName = L10n.T("Csv.Encoding");
-        options.Controls.Add(new Label { Text = _encoding.AccessibleName, AutoSize = true, Margin = new Padding(0, 6, 8, 0) });
+        _encodingLabel.Text = _encoding.AccessibleName;
+        options.Controls.Add(_encodingLabel);
         _encoding.Items.AddRange(new object[] { new EncodingOption("auto", L10n.T("Csv.AutoEncoding")),
             new EncodingOption("utf8", "UTF-8"), new EncodingOption("1251", "Windows-1251"), new EncodingOption("utf16", "UTF-16") });
         _encoding.SelectedIndex = 0;
         options.Controls.Add(_encoding);
+        _worksheet.AccessibleName = _worksheetLabel.Text = L10n.T("Data.Worksheet");
+        options.Controls.Add(_worksheetLabel);
+        options.Controls.Add(_worksheet);
         _headers.Text = L10n.T("Csv.HasHeaders");
         _headers.Margin = new Padding(18, 5, 0, 0);
         options.Controls.Add(_headers);
@@ -112,6 +119,7 @@ public sealed class CsvImportDialog : BrandForm
         CancelButton = cancel;
         Shown += (_, _) => browse.Focus();
         _encoding.SelectedIndexChanged += (_, _) => LoadPreview();
+        _worksheet.SelectionChangeCommitted += (_, _) => { ClearMapping(); LoadPreview(); };
         _headers.CheckedChanged += (_, _) => UpdatePreview();
         ResumeLayout();
     }
@@ -125,23 +133,41 @@ public sealed class CsvImportDialog : BrandForm
     private void OnBrowse(object? sender, EventArgs e)
     {
         using var dialog = new BrandedOpenFileDialog { Title = L10n.T("Csv.Title"),
-            Filter = $"{L10n.T("File.FilterCsv")} (*.csv)|*.csv|{L10n.T("File.FilterAll")} (*.*)|*.*" };
+            Filter = $"{L10n.T("Data.Filter")} (*.csv, *.xlsx, *.xls, *.xlsb)|*.csv;*.xlsx;*.xls;*.xlsb|{L10n.T("File.FilterAll")} (*.*)|*.*" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        if (!string.Equals(FilePath, dialog.FileName, StringComparison.OrdinalIgnoreCase)) ClearMapping();
+        var samePath = string.Equals(FilePath, dialog.FileName, StringComparison.OrdinalIgnoreCase);
+        var previousWorksheet = samePath ? _worksheet.SelectedItem as string : null;
+        if (!samePath) ClearMapping();
+        _worksheet.Items.Clear();
         FilePath = dialog.FileName;
         _pathBox.Text = FilePath;
-        LoadPreview();
+        LoadPreview(previousWorksheet);
     }
 
-    private void LoadPreview()
+    private void LoadPreview(string? previousWorksheet = null)
     {
         if (string.IsNullOrEmpty(FilePath)) return;
+        var excel = SpreadsheetReader.IsExcelFile(FilePath);
+        _encoding.Visible = _encodingLabel.Visible = !excel;
+        _worksheet.Visible = _worksheetLabel.Visible = excel;
         try
         {
-            _parsed = CsvReader.Parse(CsvReader.ReadFile(FilePath, (_encoding.SelectedItem as EncodingOption)?.Key ?? "auto"));
+            if (excel && _worksheet.Items.Count == 0)
+            {
+                _worksheet.Items.AddRange(SpreadsheetReader.GetWorksheetNames(FilePath).Cast<object>().ToArray());
+                if (_worksheet.Items.Count > 0)
+                {
+                    var index = previousWorksheet is null ? 0 : _worksheet.Items.IndexOf(previousWorksheet);
+                    if (index < 0) ClearMapping();
+                    _worksheet.SelectedIndex = Math.Max(0, index);
+                }
+            }
+            _parsed = SpreadsheetReader.ReadFile(FilePath, (_encoding.SelectedItem as EncodingOption)?.Key ?? "auto",
+                _worksheet.SelectedItem as string);
             UpdatePreview();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or System.Text.DecoderFallbackException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or FormatException
+            or ArgumentException or System.Xml.XmlException)
         {
             _parsed = null;
             _preview.Items.Clear();
@@ -158,7 +184,7 @@ public sealed class CsvImportDialog : BrandForm
     private void UpdatePreview()
     {
         if (_parsed is null) return;
-        var all = _parsed.Rows;
+        var all = _parsed;
         var rows = all.Skip(_headers.Checked ? 1 : 0).ToList();
         var columns = all.Count == 0 ? 0 : all.Max(r => r.Count);
         _preview.BeginUpdate();
@@ -186,7 +212,7 @@ public sealed class CsvImportDialog : BrandForm
         {
             var target = _targets[i];
             if (target.Type == CellContentType.Image) continue; // Images remain constant.
-            var description = target.Type == CellContentType.Barcode ? target.BarcodeData : target.Text;
+            var description = (target.Type == CellContentType.Barcode ? target.BarcodeData : target.Text) ?? string.Empty;
             if (description.Length > 24) description = description[..24] + "…";
             var label = new Label
             {
@@ -235,7 +261,7 @@ public sealed class CsvImportDialog : BrandForm
     private void AcceptImport(object? sender, EventArgs e)
     {
         if (_parsed is null) return;
-        var rows = _parsed.Rows.Skip(_headers.Checked ? 1 : 0).ToList();
+        var rows = _parsed.Skip(_headers.Checked ? 1 : 0).ToList();
         var mapping = _selectors.Where(x => (x.Selector.SelectedItem as ColumnOption)?.Index >= 0)
             .ToDictionary(x => x.Target, x => ((ColumnOption)x.Selector.SelectedItem!).Index);
         if (mapping.Count == 0) { ShowStatus(L10n.T("Csv.NoMapping"), error: true); return; }

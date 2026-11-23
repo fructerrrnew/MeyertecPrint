@@ -1,13 +1,14 @@
 {
   "name": "G530",
-  "version": 2,
+  "version": 3,
   "manufacturer": "GoDEX",
   "resolutionDpi": 300,
   "maxPrintWidthMm": 105.7,
   "maxPrintLengthMm": 762,
   "connections": [
     "usb",
-    "ethernet"
+    "ethernet",
+    "serial"
   ],
   "source": "https://godex.s3-accelerate.amazonaws.com/tzYihlIY91tm_agllWBHJg.preview",
   "parameters": [

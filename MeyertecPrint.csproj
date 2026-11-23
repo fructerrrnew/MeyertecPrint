@@ -8,18 +8,25 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>MeyertecPrint</RootNamespace>
     <AssemblyName>MeyertecPrint</AssemblyName>
-    <Version>0.3.0-preview</Version>
+    <Version>0.4.0-preview</Version>
     <ApplicationIcon>IconsUI\Meyertec.ico</ApplicationIcon>
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="Linux\**\*.cs" />
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
+    <PackageReference Include="ExcelDataReader" Version="3.9.0" />
+    <PackageReference Include="ExcelNumberFormat" Version="1.2.0" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.0" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="THIRD_PARTY_LICENSES.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="$(PkgSystem_IO_Ports)/THIRD-PARTY-NOTICES.TXT" Link="licenses/System.IO.Ports-Notices.txt"
+             CopyToOutputDirectory="PreserveNewest" Condition="'$(PkgSystem_IO_Ports)' != ''" />
     <!-- Языковые файлы лежат рядом с exe в папке Languages,
          туда можно добавлять новые *.json для других языков -->
     <Content Include="Languages\*.json">
@@ -37,6 +44,7 @@
     <!-- Каталог клемм (тестовые данные) лежит рядом с exe в папке cleat;
          чтобы добавить клемму — запись в cleat.json + файл изображения -->
     <Content Include="Catalog\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Catalog\*.mtemplate" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="cleat\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

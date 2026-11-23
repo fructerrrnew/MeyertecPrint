@@ -92,3 +92,92 @@ public sealed class LabelPrintLayout
             throw new InvalidDataException(L10n.T("Print.DoesNotFit"));
     }
 }
+
+internal sealed class LabelRasterPlan
+{
+    public int Width { get; }
+    public int Height { get; }
+    public IReadOnlyList<(CellContent Content, System.Drawing.Rectangle Bounds)> Elements { get; }
+
+    private LabelRasterPlan(int width, int height, List<(CellContent, System.Drawing.Rectangle)> elements)
+    {
+        Width = width;
+        Height = height;
+        Elements = elements;
+    }
+
+    public static LabelRasterPlan Create(LabelLayout layout, PrintSettings settings, float dpiX, float dpiY)
+    {
+        if (!float.IsFinite(dpiX) || !float.IsFinite(dpiY) || dpiX is < 72 or > 2400 || dpiY is < 72 or > 2400)
+            throw new InvalidDataException(L10n.T("Print.InvalidResolution"));
+        var layoutPlan = LabelPrintLayout.Create(layout);
+        var offsetX = settings.OffsetXMm * 1000d;
+        var offsetY = settings.OffsetYMm * 1000d;
+        layoutPlan.EnsureFits(settings.OffsetXMm, settings.OffsetYMm, layout.MediaWidthUm, layout.MediaHeightUm);
+        var width = Dot(layout.MediaWidthUm, dpiX);
+        var height = Dot(layout.MediaHeightUm, dpiY);
+        if (width < 1 || height < 1 || (long)width * height > 80_000_000)
+            throw new InvalidDataException(L10n.T("Print.RasterTooLarge"));
+
+        // Round both boundaries so adjacent cells still meet on the same printer dot.
+        System.Drawing.Rectangle Rectangle(long x, long y, long w, long h)
+        {
+            var left = Dot(x + offsetX, dpiX);
+            var top = Dot(y + offsetY, dpiY);
+            var right = Dot(x + (double)w + offsetX, dpiX);
+            var bottom = Dot(y + (double)h + offsetY, dpiY);
+            if (right <= left || bottom <= top)
+                throw new InvalidDataException(L10n.T("Print.CellTooSmall"));
+            return System.Drawing.Rectangle.FromLTRB(left, top, right, bottom);
+        }
+
+        var elements = new List<(CellContent, System.Drawing.Rectangle)>();
+        foreach (var position in layoutPlan.Cells)
+        {
+            var content = layout.Rows[position.Row].Cells[position.Column].Content;
+            elements.Add((content, Rectangle(position.X, position.Y, position.Width, position.Height)));
+        }
+        foreach (var item in layout.Objects ?? [])
+        {
+            if (item is null || item.Content is null || item.WidthUm <= 0 || item.HeightUm <= 0 ||
+                item.XUm + offsetX < 0 || item.YUm + offsetY < 0 ||
+                item.XUm + (double)item.WidthUm + offsetX > layout.MediaWidthUm ||
+                item.YUm + (double)item.HeightUm + offsetY > layout.MediaHeightUm)
+                throw new InvalidDataException(L10n.T("Print.DoesNotFit"));
+            elements.Add((item.Content, Rectangle(item.XUm, item.YUm, item.WidthUm, item.HeightUm)));
+        }
+        return new LabelRasterPlan(width, height, elements);
+    }
+
+    private static int Dot(double positionUm, float dpi) => checked((int)Math.Round(positionUm * dpi / 25_400d));
+}
+
+internal static class LabelTextFit
+{
+    public static float GetRequestedPoints(CellContent content, int heightDots, float dpi)
+    {
+        var size = content.FontSizePt ?? Math.Max(6f, heightDots * 0.35f * 72f / dpi);
+        if (!float.IsFinite(size) || size <= 0 || size > 500)
+            throw new InvalidDataException(L10n.T("Print.InvalidFont"));
+        return size;
+    }
+
+    public static float FindSize(float maximum, Func<float, bool> fits)
+    {
+        if (fits(maximum)) return maximum;
+
+        // A single printer dot still has to be able to represent part of a glyph.
+        var minimum = Math.Min(1f, maximum);
+        if (!fits(minimum)) return minimum;
+        for (var i = 0; i < 12 && maximum - minimum > 0.025f; i++)
+        {
+            var middle = (minimum + maximum) / 2;
+            if (fits(middle)) minimum = middle;
+            else maximum = middle;
+        }
+        return minimum;
+    }
+
+    public static InvalidDataException Overflow(string text)
+        => new(string.Format(L10n.T("Print.TextOverflow"), text.Length > 40 ? text[..40] + "…" : text));
+}

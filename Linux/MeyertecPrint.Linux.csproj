@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MeyertecPrint.Linux</AssemblyName>
+    <RootNamespace>MeyertecPrint</RootNamespace>
+    <EnableDefaultItems>true</EnableDefaultItems>
+    <Version>0.4.0-preview</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.23" />
+    <PackageReference Include="ExcelDataReader" Version="3.9.0" />
+    <PackageReference Include="ExcelNumberFormat" Version="1.2.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="2.88.9" GeneratePathProperty="true" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.0" GeneratePathProperty="true" />
+    <PackageReference Include="ZXing.Net" Version="0.16.11" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../L10n.cs;../CsvReader.cs;../CsvBatch.cs;../SpreadsheetReader.cs;../LabelNumbering.cs;
+                      ../LabelModel.cs;../LabelTypes.cs;../LabelPrintLayout.cs;../LabelPrintPages.cs;../LabelSequence.cs;
+                      ../GeometryOperations.cs;../MeyertecProject.cs;../UndoRedo.cs;../WstxIo.cs;
+                      ../LabelTemplate.cs;../TemplateFeed.cs;../TemplateFeedSettings.cs;../PrinterPlugin.cs;../Godex*.cs;
+                      ../BarcodeEncoder.cs;../QrEncoder.cs" Link="Shared/%(Filename)%(Extension)" />
+    <Content Include="../Languages/*.json" Link="Languages/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Catalog/*" Link="Catalog/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Plugins/*.json" Link="Plugins/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../IconsUI/Brand.png" Link="IconsUI/Brand.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../THIRD_PARTY_LICENSES.txt" Link="THIRD_PARTY_LICENSES.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="licenses/*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="$(PkgSkiaSharp_NativeAssets_Linux)/LICENSE.txt" Link="licenses/SkiaSharp-HarfBuzzSharp.txt"
+             CopyToOutputDirectory="PreserveNewest" Condition="'$(PkgSkiaSharp_NativeAssets_Linux)' != ''" />
+    <Content Include="$(PkgSkiaSharp_NativeAssets_Linux)/THIRD-PARTY-NOTICES.txt" Link="licenses/SkiaSharp-HarfBuzzSharp-Notices.txt"
+             CopyToOutputDirectory="PreserveNewest" Condition="'$(PkgSkiaSharp_NativeAssets_Linux)' != ''" />
+    <Content Include="$(PkgSystem_IO_Ports)/THIRD-PARTY-NOTICES.TXT" Link="licenses/System.IO.Ports-Notices.txt"
+             CopyToOutputDirectory="PreserveNewest" Condition="'$(PkgSystem_IO_Ports)' != ''" />
+  </ItemGroup>
+</Project>

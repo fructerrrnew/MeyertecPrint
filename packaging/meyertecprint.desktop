@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MEYERTEC Print
+Comment=Design and print industrial labels
+Comment[ru]=Редактор и печать промышленных маркировок
+Exec=meyertecprint
+Icon=meyertecprint
+Terminal=false
+Categories=Office;

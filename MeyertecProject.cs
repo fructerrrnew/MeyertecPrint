@@ -14,7 +14,7 @@ namespace MeyertecPrint;
 public class ProjectFile
 {
     public const string FileExtension = ".mprj";
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -26,6 +26,8 @@ public class ProjectFile
 
     /// <summary>Принтер, для которого сделан проект (в 1-й итерации — Godex 530).</summary>
     public string? PrinterModel { get; set; }
+    public string? TemplateId { get; set; }
+    public int? TemplateVersion { get; set; }
 
     public PrintSettings Print { get; set; } = new();
 
@@ -36,9 +38,14 @@ public class ProjectFile
 public class PrintSettings
 {
     public string? PrinterName { get; set; }
+    public string PrintBackend { get; set; } = "driver";
     public string ConnectionKind { get; set; } = "usb";
     public string? NetworkHost { get; set; }
+    public string? SerialPort { get; set; }
+    public int SerialBaudRate { get; set; } = 9600;
+    public string? UsbDevice { get; set; }
     public int Copies { get; set; } = 1;
+    public decimal MediaGapMm { get; set; }
     /// <summary>Смещение всего задания по X, мм (может быть отрицательным).</summary>
     public double OffsetXMm { get; set; }
 
@@ -123,6 +130,9 @@ public class LabelItem
 
     /// <summary>Содержимое этикетки: поле → значение (запас на будущее).</summary>
     public Dictionary<string, string> Fields { get; set; } = new();
+
+    /// <summary>Дополнительный экземпляр макета без подстановки данных.</summary>
+    public bool UseLayout { get; set; }
 }
 
 /// <summary>Чтение и запись файлов проекта.</summary>
@@ -158,20 +168,42 @@ public static class ProjectFileIo
         return project;
     }
 
-    public static void SaveRecovery(ProjectFile project, string path) => WriteAtomic(project, path);
+    public static void SaveRecovery(ProjectFile project, string path)
+    {
+        var version = project.Version;
+        try
+        {
+            project.Version = RequiredVersion(project);
+            WriteAtomic(project, path);
+        }
+        finally { project.Version = version; }
+    }
 
     public static void Save(ProjectFile project, string path)
     {
         project.Modified = DateTime.Now;
-        // Старые версии приложения не умеют хранить свободные объекты.
-        // Новый номер не даст им молча открыть и перезаписать такой проект.
+        project.Version = RequiredVersion(project);
+        WriteAtomic(project, path);
+    }
+
+    private static int RequiredVersion(ProjectFile project)
+    {
         var layout = project.Ribbon?.Layout;
+        if (project.TemplateId is not null || project.TemplateVersion is not null ||
+            project.Print is { } print && (print.PrintBackend != "driver" || print.ConnectionKind == "serial" ||
+                print.SerialPort is not null || print.UsbDevice is not null || print.SerialBaudRate != 9600 ||
+                print.Temperature is not null || print.CutOffsetMm is not null || print.MediaGapMm != 0) ||
+            project.Ribbon?.Labels.Any(label => label.UseLayout) == true ||
+            layout is not null && layout.Rows.SelectMany(row => row.Cells).Select(cell => cell.Content)
+                .Concat((layout.Objects ?? []).Select(item => item.Content))
+                .Any(content => content.AutoFitText || content.InvertColors))
+            return ProjectFile.CurrentVersion;
+
         var hasNewPrintSettings = !string.IsNullOrWhiteSpace(project.Print?.PrinterName) ||
             project.Print?.ConnectionKind == "ethernet" || (project.Print?.Copies ?? 1) != 1;
-        project.Version = hasNewPrintSettings || layout is not null &&
+        return hasNewPrintSettings || layout is not null &&
             (layout.MediaWidthUm != 60_000 || layout.MediaHeightUm != 30_000)
             ? 3 : layout?.Objects is { Count: > 0 } ? 2 : 1;
-        WriteAtomic(project, path);
     }
 
     private static void WriteAtomic(ProjectFile project, string path)

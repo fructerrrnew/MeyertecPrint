@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "meyertec-stock-60x30",
+  "version": 1,
+  "name": "60 × 30 mm",
+  "material": "Paper",
+  "source": "user-confirmed dimensions from the existing stock catalog",
+  "printerModel": "G530",
+  "layout": {
+    "mediaWidthUm": 60000,
+    "mediaHeightUm": 30000,
+    "geometry": { "labelsInRow": 1, "widthUm": 60000, "heightUm": 30000 },
+    "rows": [{ "heightUm": 30000, "cells": [{ "widthUm": 60000, "content": { "type": "text", "text": "XT1:01" } }] }]
+  },
+  "print": { "copies": 1 }
+}

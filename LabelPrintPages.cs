@@ -23,13 +23,24 @@ public static class LabelPrintPages
     }
 
     public static int CountImported(LabelLayout template, IEnumerable<LabelItem>? labels)
+        => PrintableRecords(template, labels).Count();
+
+    public static IEnumerable<LabelItem> PrintableRecords(LabelLayout template, IEnumerable<LabelItem>? labels)
     {
-        if (labels is null) return 0;
+        if (labels is null) yield break;
         var count = GetBindings(template).Count;
-        return labels.Count(label => label?.Fields is not null && label.Fields.Keys.Any(key =>
-            key.Length > 1 && key[0] == 'C' && int.TryParse(key.AsSpan(1), out var index)
-                && index >= 0 && index < count && key == "C" + index));
+        foreach (var label in labels)
+            if (label is not null && (label.UseLayout || label.Fields is not null && label.Fields.Keys.Any(key =>
+                key.Length > 1 && key[0] == 'C' && int.TryParse(key.AsSpan(1), out var index)
+                && index >= 0 && index < count && key == "C" + index)))
+                yield return label;
     }
+
+    public static Dictionary<string, string> CaptureFields(LabelLayout layout) =>
+        GetBindings(layout).Select((content, index) => (content, index))
+            .Where(field => field.content.Type != CellContentType.Image)
+            .ToDictionary(field => "C" + field.index, field => field.content.Type == CellContentType.Barcode
+                ? field.content.BarcodeData : field.content.Text);
 
     public static bool ApplyFields(LabelLayout page, IReadOnlyDictionary<string, string> fields)
     {
@@ -72,14 +83,8 @@ public static class LabelPrintPages
         public PageCollection(LabelLayout template, IEnumerable<LabelItem>? labels)
         {
             _template = template.Clone();
-            if (labels is null) return;
-            var count = GetBindings(_template).Count;
-            foreach (var label in labels)
-            {
-                if (label?.Fields is null || !label.Fields.Keys.Any(key => key.Length > 1 && key[0] == 'C' &&
-                    int.TryParse(key.AsSpan(1), out var index) && index >= 0 && index < count && key == "C" + index)) continue;
-                _records.Add(new Dictionary<string, string>(label.Fields));
-            }
+            foreach (var label in PrintableRecords(_template, labels))
+                _records.Add(label.UseLayout ? new Dictionary<string, string>() : new Dictionary<string, string>(label.Fields));
         }
         public int Count => 1 + _records.Count;
         public LabelLayout this[int index]

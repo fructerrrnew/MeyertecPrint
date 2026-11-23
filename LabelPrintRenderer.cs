@@ -5,21 +5,13 @@ using System.Runtime.InteropServices;
 
 namespace MeyertecPrint;
 
-/// <summary>Отрисовка одной физической этикетки 60 × 30 мм без рамок редактора.</summary>
+/// <summary>Отрисовка одной физической этикетки без рамок редактора.</summary>
 public static class LabelPrintRenderer
 {
     public static Bitmap Render(LabelLayout layout, PrintSettings settings, float dpiX, float dpiY, bool validateForPrint = false)
     {
-        if (!float.IsFinite(dpiX) || !float.IsFinite(dpiY) || dpiX < 72 || dpiY < 72 || dpiX > 2400 || dpiY > 2400)
-            throw new InvalidDataException(L10n.T("Print.InvalidResolution"));
-        var plan = LabelPrintLayout.Create(layout);
-        settings ??= new PrintSettings();
-        plan.EnsureFits(settings.OffsetXMm, settings.OffsetYMm, layout.MediaWidthUm, layout.MediaHeightUm);
-        var width = checked((int)Math.Round(layout.MediaWidthUm * dpiX / 25_400d));
-        var height = checked((int)Math.Round(layout.MediaHeightUm * dpiY / 25_400d));
-        if (width < 1 || height < 1 || (long)width * height > 80_000_000)
-            throw new InvalidDataException(L10n.T("Print.RasterTooLarge"));
-        var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        var plan = LabelRasterPlan.Create(layout, settings ?? new PrintSettings(), dpiX, dpiY);
+        var bitmap = new Bitmap(plan.Width, plan.Height, PixelFormat.Format32bppArgb);
         try
         {
             bitmap.SetResolution(dpiX, dpiY);
@@ -27,35 +19,8 @@ public static class LabelPrintRenderer
             g.Clear(Color.White);
             g.SmoothingMode = SmoothingMode.None;
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
-            foreach (var position in plan.Cells)
-            {
-                var content = layout.Rows[position.Row].Cells[position.Column].Content;
-                // Округляем координаты границ, а не ширину каждой ячейки отдельно.
-                var left = Dot(position.X + settings.OffsetXMm * 1000, dpiX);
-                var right = Dot(position.X + position.Width + settings.OffsetXMm * 1000, dpiX);
-                var top = Dot(position.Y + settings.OffsetYMm * 1000, dpiY);
-                var bottom = Dot(position.Y + position.Height + settings.OffsetYMm * 1000, dpiY);
-                var rect = Rectangle.FromLTRB(left, top, right, bottom);
-                if (rect.Width <= 0 || rect.Height <= 0)
-                    throw new InvalidDataException(L10n.T("Print.CellTooSmall"));
-                DrawContent(g, content, rect, dpiY, validateForPrint);
-            }
-            foreach (var item in layout.Objects ?? new List<LabelObject>())
-            {
-                if (item is null || item.Content is null || item.WidthUm <= 0 || item.HeightUm <= 0 ||
-                    item.XUm + settings.OffsetXMm * 1000d < 0 || item.YUm + settings.OffsetYMm * 1000d < 0 ||
-                    item.XUm + (double)item.WidthUm + settings.OffsetXMm * 1000d > layout.MediaWidthUm ||
-                    item.YUm + (double)item.HeightUm + settings.OffsetYMm * 1000d > layout.MediaHeightUm)
-                    throw new InvalidDataException(L10n.T("Print.DoesNotFit"));
-                var left = Dot(item.XUm + settings.OffsetXMm * 1000, dpiX);
-                var top = Dot(item.YUm + settings.OffsetYMm * 1000, dpiY);
-                var right = Dot(item.XUm + (double)item.WidthUm + settings.OffsetXMm * 1000, dpiX);
-                var bottom = Dot(item.YUm + (double)item.HeightUm + settings.OffsetYMm * 1000, dpiY);
-                var rect = Rectangle.FromLTRB(left, top, right, bottom);
-                if (rect.Width <= 0 || rect.Height <= 0)
-                    throw new InvalidDataException(L10n.T("Print.CellTooSmall"));
-                DrawContent(g, item.Content, rect, dpiY, validateForPrint);
-            }
+            foreach (var element in plan.Elements)
+                DrawContent(g, element.Content, element.Bounds, dpiY, validateForPrint);
             return bitmap;
         }
         catch
@@ -83,38 +48,41 @@ public static class LabelPrintRenderer
         finally { graphics.Restore(state); }
     }
 
-    private static int Dot(double um, float dpi) => checked((int)Math.Round(um * dpi / 25_400d));
-
     private static void DrawContent(Graphics g, CellContent content, Rectangle rect, float dpiY, bool validateForPrint)
     {
         switch (content.Type)
         {
             case CellContentType.Empty:
+            case CellContentType.Text or CellContentType.Qr when string.IsNullOrEmpty(content.Text):
+            case CellContentType.Barcode when string.IsNullOrEmpty(content.BarcodeData):
+            case CellContentType.Image when string.IsNullOrEmpty(content.ImageBase64):
                 return;
+        }
+
+        var foreground = content.InvertColors ? Brushes.White : Brushes.Black;
+        if (content.InvertColors) g.FillRectangle(Brushes.Black, rect);
+        switch (content.Type)
+        {
             case CellContentType.Text:
-                DrawText(g, content, rect, dpiY, validateForPrint);
-                return;
+                DrawText(g, content, rect, dpiY, foreground, validateForPrint);
+                break;
             case CellContentType.Qr:
-                if (!string.IsNullOrEmpty(content.Text)) DrawQr(g, content.Text, rect);
-                return;
+                DrawQr(g, content.Text, rect, foreground);
+                break;
             case CellContentType.Barcode:
-                if (!string.IsNullOrEmpty(content.BarcodeData)) DrawBarcode(g, content.BarcodeSymbol, content.BarcodeData, rect);
-                return;
+                DrawBarcode(g, content.BarcodeSymbol, content.BarcodeData, rect, foreground);
+                break;
             case CellContentType.Image:
-                if (!string.IsNullOrEmpty(content.ImageBase64)) DrawImage(g, content.ImageBase64, rect);
-                return;
+                DrawImage(g, content.ImageBase64!, rect, content.InvertColors);
+                break;
             default:
                 throw new InvalidDataException(L10n.T("Print.UnsupportedContent"));
         }
     }
 
-    private static void DrawText(Graphics g, CellContent content, Rectangle rect, float dpiY, bool validateForPrint)
+    private static void DrawText(Graphics g, CellContent content, Rectangle rect, float dpiY, Brush foreground, bool validateForPrint)
     {
-        if (string.IsNullOrEmpty(content.Text)) return;
-        var automaticSize = Math.Max(6f, rect.Height * 0.35f * 72f / dpiY);
-        var size = content.FontSizePt ?? automaticSize;
-        if (!float.IsFinite(size) || size <= 0 || size > 500)
-            throw new InvalidDataException(L10n.T("Print.InvalidFont"));
+        var size = LabelTextFit.GetRequestedPoints(content, rect.Height, dpiY);
         var style = content.Bold ? FontStyle.Bold : FontStyle.Regular;
         Font font;
         try { font = new Font(string.IsNullOrEmpty(content.FontName) ? Theme.FontName : content.FontName, size, style, GraphicsUnit.Point); }
@@ -126,19 +94,31 @@ public static class LabelPrintRenderer
             if (validateForPrint && !string.IsNullOrWhiteSpace(content.FontName) &&
                 !string.Equals(font.Name, content.FontName, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException(string.Format(L10n.T("Print.FontMissing"), content.FontName));
-            if (validateForPrint)
+
+            bool Fits(Font testedFont)
             {
-                g.MeasureString(content.Text, font, rect.Size, format, out var fitted, out _);
-                if (fitted < content.Text.Length)
-                    throw new InvalidDataException(string.Format(L10n.T("Print.TextOverflow"), content.Text.Length > 40 ? content.Text[..40] + "…" : content.Text));
+                g.MeasureString(content.Text, testedFont, rect.Size, format, out var fitted, out _);
+                return fitted >= content.Text.Length;
             }
+
+            var fittedSize = content.AutoFitText || !content.FontSizePt.HasValue
+                ? LabelTextFit.FindSize(size, points =>
+                {
+                    using var trial = new Font(font.FontFamily, points, font.Style, GraphicsUnit.Point);
+                    return Fits(trial);
+                })
+                : size;
+            using var adjusted = fittedSize != size ? new Font(font.FontFamily, fittedSize, font.Style, GraphicsUnit.Point) : null;
+            var selected = adjusted ?? font;
+            if (validateForPrint && !Fits(selected)) throw LabelTextFit.Overflow(content.Text);
+
             var state = g.Save();
-            try { g.SetClip(rect); g.DrawString(content.Text, font, Brushes.Black, rect, format); }
+            try { g.SetClip(rect); g.DrawString(content.Text, selected, foreground, rect, format); }
             finally { g.Restore(state); }
         }
     }
 
-    private static void DrawQr(Graphics g, string text, Rectangle rect)
+    private static void DrawQr(Graphics g, string text, Rectangle rect, Brush foreground)
     {
         var matrix = QrEncoder.Encode(text);
         const int quiet = 4;
@@ -149,10 +129,10 @@ public static class LabelPrintRenderer
         var top = rect.Top + (rect.Height - modules * module) / 2 + quiet * module;
         for (var row = 0; row < matrix.GetLength(0); row++)
             for (var column = 0; column < matrix.GetLength(1); column++)
-                if (matrix[row, column]) g.FillRectangle(Brushes.Black, left + column * module, top + row * module, module, module);
+                if (matrix[row, column]) g.FillRectangle(foreground, left + column * module, top + row * module, module, module);
     }
 
-    private static void DrawBarcode(Graphics g, BarcodeSymbol symbol, string data, Rectangle rect)
+    private static void DrawBarcode(Graphics g, BarcodeSymbol symbol, string data, Rectangle rect, Brush foreground)
     {
         var modules = BarcodeEncoder.Encode(symbol, data);
         const int quiet = 12;
@@ -162,10 +142,10 @@ public static class LabelPrintRenderer
         var height = Math.Max(1, rect.Height * 8 / 10);
         var top = rect.Top + (rect.Height - height) / 2;
         for (var i = 0; i < modules.Length; i++)
-            if (modules[i]) g.FillRectangle(Brushes.Black, left + i * module, top, module, height);
+            if (modules[i]) g.FillRectangle(foreground, left + i * module, top, module, height);
     }
 
-    private static void DrawImage(Graphics g, string encoded, Rectangle rect)
+    private static void DrawImage(Graphics g, string encoded, Rectangle rect, bool invert)
     {
         try
         {
@@ -174,9 +154,30 @@ public static class LabelPrintRenderer
             var scale = Math.Min(rect.Width / (double)image.Width, rect.Height / (double)image.Height);
             var width = (float)(image.Width * scale);
             var height = (float)(image.Height * scale);
-            var destination = new RectangleF(rect.X + (rect.Width - width) / 2, rect.Y + (rect.Height - height) / 2, width, height);
+            var destination = new RectangleF(rect.X + (rect.Width - width) / 2,
+                rect.Y + (rect.Height - height) / 2, width, height);
             var state = g.Save();
-            try { g.SetClip(rect); g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(image, destination); }
+            try
+            {
+                g.SetClip(rect);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                if (!invert)
+                {
+                    g.DrawImage(image, destination);
+                    return;
+                }
+
+                using var attributes = new ImageAttributes();
+                attributes.SetWrapMode(WrapMode.TileFlipXY);
+                attributes.SetColorMatrix(new ColorMatrix(new[]
+                {
+                    new[] { -1f, 0, 0, 0, 0 }, new[] { 0, -1f, 0, 0, 0 }, new[] { 0, 0, -1f, 0, 0 },
+                    new[] { 0, 0, 0, 1f, 0 }, new[] { 1f, 1f, 1f, 0, 1f }
+                }));
+                g.DrawImage(image,
+                    [destination.Location, new PointF(destination.Right, destination.Top), new PointF(destination.Left, destination.Bottom)],
+                    new RectangleF(0, 0, image.Width, image.Height), GraphicsUnit.Pixel, attributes);
+            }
             finally { g.Restore(state); }
         }
         catch (Exception ex) when (ex is FormatException or ArgumentException or ExternalException or OutOfMemoryException)
