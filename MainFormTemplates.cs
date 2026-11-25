@@ -142,10 +142,22 @@ internal static class TemplateImage
     {
         try
         {
-            using var bitmap = LabelPrintRenderer.Render(layout, print, 96, 96);
-            var scale = Math.Min(1d, 800d / Math.Max(bitmap.Width, bitmap.Height));
-            using var preview = new Bitmap(bitmap, new Size(Math.Max(1, (int)(bitmap.Width * scale)),
-                Math.Max(1, (int)(bitmap.Height * scale))));
+            var pages = LabelPrintPages.CreateStockPreview(layout);
+            using var first = LabelPrintRenderer.Render(pages[0], print, 96, 96);
+            var scale = Math.Min(1d, 800d / Math.Max(first.Width, first.Height * pages.Count));
+            var width = Math.Max(1, (int)(first.Width * scale));
+            var height = Math.Max(1, (int)(first.Height * scale));
+            using var preview = new Bitmap(width, (height + 1) * pages.Count - 1);
+            using (var graphics = Graphics.FromImage(preview))
+            {
+                graphics.Clear(Theme.Canvas);
+                graphics.DrawImage(first, new Rectangle(0, 0, width, height));
+                for (var i = 1; i < pages.Count; i++)
+                {
+                    using var section = LabelPrintRenderer.Render(pages[i], print, 96, 96, showMedia: true);
+                    graphics.DrawImage(section, new Rectangle(0, i * (height + 1), width, height));
+                }
+            }
             using var stream = new MemoryStream();
             preview.Save(stream, ImageFormat.Png);
             return stream.ToArray();
@@ -327,6 +339,8 @@ internal sealed class TemplateLibraryDialog : BrandForm
         }
         _info.Text = $"{template.Material}  ·  {Units.UmToMm(template.Layout.MediaWidthUm):0.###} × " +
             $"{Units.UmToMm(template.Layout.MediaHeightUm):0.###} {L10n.T("Unit.Mm")}";
+        if (template.Layout.AlternateNotch is not null)
+            _info.Text += Environment.NewLine + L10n.T("Template.AlternatingNotch");
         if (template.PreviewPngBase64 is { Length: > 0 } encoded)
         {
             try { _preview.Image = TemplateImage.Decode(Convert.FromBase64String(encoded)); }

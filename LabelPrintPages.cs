@@ -75,6 +75,30 @@ public static class LabelPrintPages
         return new PageCollection(template, includeImported ? labels : null);
     }
 
+    internal static List<LabelItem> CreateStockSampleRecords(LabelLayout layout)
+    {
+        if (layout.AlternateNotch is null) return [];
+        var fields = CaptureFields(layout);
+        var name = string.Join(" | ", fields.Values.Where(value => !string.IsNullOrWhiteSpace(value)).Take(3));
+        return [Sample(2), Sample(3)];
+
+        LabelItem Sample(int index) => new()
+        {
+            Index = index, Name = name, Fields = new(fields), UseLayout = fields.Count == 0
+        };
+    }
+
+    public static IReadOnlyList<LabelLayout> CreateStockPreview(LabelLayout layout) =>
+        Create(layout, CreateStockSampleRecords(layout), true);
+
+    internal static LabelLayout ForCopy(LabelLayout page, long copyIndex, int pagesPerCopy)
+    {
+        if (page.AlternateNotch is null || copyIndex % 2 == 0 || pagesPerCopy % 2 == 0) return page;
+        var copy = page.Clone();
+        copy.IsNotchedSection = !page.IsNotchedSection;
+        return copy;
+    }
+
     // Clone only the requested page, so large batches do not allocate one layout per record.
     private sealed class PageCollection : IReadOnlyList<LabelLayout>
     {
@@ -93,6 +117,7 @@ public static class LabelPrintPages
             {
                 if (index < 0 || index >= Count) throw new ArgumentOutOfRangeException(nameof(index));
                 var page = _template.Clone();
+                page.IsNotchedSection = index % 2 != 0;
                 if (index > 0) ApplyFields(page, _records[index - 1]);
                 return page;
             }

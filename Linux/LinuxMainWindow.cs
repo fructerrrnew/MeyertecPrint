@@ -251,7 +251,7 @@ internal sealed partial class LinuxMainWindow : Window
             {
                 var index = i;
                 var card = new LayoutCanvas { Width = 160, Height = 95 };
-                card.SetPage(pages[index], _project.Print, [], -1, 96);
+                card.SetPage(pages[index], _project.Print, [], -1, 96, showMedia: true);
                 var button = new Button
                 {
                     Margin = new Thickness(4), Padding = new Thickness(5), Background = index == _record ? Gold : null,
@@ -265,7 +265,7 @@ internal sealed partial class LinuxMainWindow : Window
         }
         else
         {
-            _canvas.SetPage(pages[_record], _project.Print, _record == 0 ? _elements : [], _selected);
+            _canvas.SetPage(pages[_record], _project.Print, _record == 0 ? _elements : [], _selected, showMedia: true);
             view = _canvas;
         }
         Grid.SetRow(view, 1);
@@ -301,7 +301,8 @@ internal sealed partial class LinuxMainWindow : Window
         {
             Text = Tr("Макет и элементы", "Layout and elements"), FontSize = 18, FontWeight = FontWeight.SemiBold
         });
-        content.Children.Add(Action(Tr("Размеры носителя…", "Media size…"), EditMedia));
+        content.Children.Add(Action(Tr("Размеры носителя…", "Media size…"), EditMedia,
+            enabled: Layout.AlternateNotch is null));
         if (_record > 0)
         {
             content.Children.Add(new TextBlock { Text = Tr("Положение и формат полей задаются на первой этикетке.", "Set field positions and styles on the first label."), TextWrapping = TextWrapping.Wrap });
@@ -594,7 +595,7 @@ internal sealed partial class LinuxMainWindow : Window
         _dirty = dirty;
         _selected = -1;
         _record = 0;
-        _strip = false;
+        _strip = project.Ribbon.GetLayout().AlternateNotch is not null && Pages.Count > 1;
         _history.Clear();
         RebuildShell();
     }
@@ -745,6 +746,7 @@ internal sealed partial class LinuxMainWindow : Window
     private sealed class LayoutCanvas : Control
     {
         private Bitmap? _bitmap;
+        private bool _hasNotchedStock;
         private long _mediaWidth;
         private long _mediaHeight;
         private PrintSettings _settings = new();
@@ -757,17 +759,21 @@ internal sealed partial class LinuxMainWindow : Window
         public event Action<int>? SelectionRequested;
         public event Action<int, long, long>? MoveRequested;
 
-        public void SetPage(LabelLayout layout, PrintSettings settings, IReadOnlyList<Element> elements, int selected, int dpi = 144, bool validateForPrint = false)
+        public Thickness PaperInset { get; init; } = new(19, 20);
+
+        public void SetPage(LabelLayout layout, PrintSettings settings, IReadOnlyList<Element> elements, int selected,
+            int dpi = 144, bool validateForPrint = false, bool showMedia = false)
         {
             Clear();
             _settings = settings;
             _mediaWidth = layout.MediaWidthUm;
             _mediaHeight = layout.MediaHeightUm;
+            _hasNotchedStock = showMedia && layout.AlternateNotch is not null;
             _elements = elements;
             _selected = selected;
             try
             {
-                using var raster = LabelRaster.Render(layout, settings, dpi, validateForPrint);
+                using var raster = LabelRaster.Render(layout, settings, dpi, validateForPrint, showMedia);
                 _bitmap = ToBitmap(raster);
             }
             catch (Exception ex) { _error = ex.Message; }
@@ -793,7 +799,8 @@ internal sealed partial class LinuxMainWindow : Window
             var paper = Paper;
             if (_bitmap is not null && paper.Width > 0)
             {
-                context.FillRectangle(Brushes.LightSlateGray, paper.Translate(new Vector(2, 3)));
+                if (!_hasNotchedStock)
+                    context.FillRectangle(Brushes.LightSlateGray, paper.Translate(new Vector(2, 3)));
                 context.DrawImage(_bitmap, paper);
             }
             else if (_error is not null)
@@ -815,7 +822,8 @@ internal sealed partial class LinuxMainWindow : Window
             get
             {
                 if (_mediaWidth <= 0 || _mediaHeight <= 0) return default;
-                var scale = Math.Min(Math.Max(0, Bounds.Width - 38) / _mediaWidth, Math.Max(0, Bounds.Height - 40) / _mediaHeight);
+                var scale = Math.Min(Math.Max(0, Bounds.Width - PaperInset.Left - PaperInset.Right) / _mediaWidth,
+                    Math.Max(0, Bounds.Height - PaperInset.Top - PaperInset.Bottom) / _mediaHeight);
                 var width = _mediaWidth * scale;
                 var height = _mediaHeight * scale;
                 return new Rect((Bounds.Width - width) / 2, (Bounds.Height - height) / 2, width, height);

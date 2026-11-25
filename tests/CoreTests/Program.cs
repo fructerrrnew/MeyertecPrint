@@ -140,6 +140,37 @@ try
         updatedTemplate.Id == loadedTemplate.Id && updatedTemplate.Version == 2 &&
         library.Install(updatedTemplate) && !library.Install(loadedTemplate) && library.GetAll().Single().Name == "Updated");
 
+    var terminalTemplate = TemplateLibrary.LoadFile(Path.Combine(AppContext.BaseDirectory, "Catalog", "meyertec-terminal-50x10.mtemplate"));
+    var terminal = terminalTemplate.CreateProject("Terminal markers");
+    var terminalLayout = terminal.Ribbon.GetLayout();
+    var terminalPages = LabelPrintPages.Create(terminalLayout, terminal.Ribbon.Labels, true);
+    var notch = new MediaNotch(5_000, 5_000, 5_000);
+    Check("Terminal template opens with three editable 50 × 10 mm sections and no gap",
+        terminalLayout.MediaWidthUm == 50_000 && terminalLayout.MediaHeightUm == 10_000 &&
+        terminal.Print.MediaGapMm == 0 && terminalPages.Count == 3 &&
+        terminal.Ribbon.Labels.All(item => !item.UseLayout && item.Fields["C0"] == "X1"));
+    Check("Right-edge notch alternates and continues across odd-sized copies",
+        terminalPages[0].ActiveNotch is null && terminalPages[1].ActiveNotch == notch && terminalPages[2].ActiveNotch is null &&
+        LabelPrintPages.ForCopy(terminalPages[0], 1, 3).ActiveNotch == notch &&
+        LabelPrintPages.ForCopy(terminalPages[1], 1, 3).ActiveNotch is null &&
+        LabelPrintPages.ForCopy(terminalPages[1], 1, 2).ActiveNotch == notch);
+    var shifted = new PrintSettings { OffsetXMm = 0.25, OffsetYMm = 0.25 };
+    var notchedRaster = LabelRasterPlan.Create(terminalPages[1], shifted, 300, 300);
+    Check("The notch stays fixed on the media when artwork moves",
+        notchedRaster is { Width: 591, Height: 118, Cutout: { X: 531, Y: 30, Right: 591, Bottom: 89 } });
+    var terminalPath = Path.Combine(tmp, "terminal.mprj");
+    ProjectFileIo.Save(terminal, terminalPath);
+    var restoredTerminal = ProjectFileIo.Load(terminalPath);
+    var exportedTerminal = LabelTemplate.FromProject(restoredTerminal, terminalTemplate.Name, terminalTemplate.Material);
+    TemplateLibrary.SaveFile(exportedTerminal, templatePath);
+    Check("Project and exported template retain notch geometry",
+        restoredTerminal.Version == 5 && restoredTerminal.Ribbon.GetLayout().AlternateNotch == notch &&
+        TemplateLibrary.LoadFile(templatePath) is { SchemaVersion: 2, Layout.AlternateNotch: { DepthUm: 5_000 } });
+    var invalidNotch = terminalLayout.Clone();
+    invalidNotch.AlternateNotch = new MediaNotch(5_000, 5_000, 0);
+    Check("Invalid notch geometry and lossy WSTX export are rejected",
+        Rejects(() => LabelPrintLayout.Create(invalidNotch)) && Rejects(() => WstxIo.Write("Terminal", terminalLayout, templatePath)));
+
     var xml = Path.Combine(tmp, "project.wstx"); WstxIo.Write("test", layout, xml);
     Check("WSTX internal round-trip reads content", WstxIo.Read(xml).Layout.Rows[0].Cells[0].Content.Text == layout.Rows[0].Cells[0].Content.Text);
     var text = File.ReadAllText(xml).Replace("</StripBlocks>", "<StripBlock /></StripBlocks>"); File.WriteAllText(xml, text);

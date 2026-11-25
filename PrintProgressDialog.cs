@@ -138,8 +138,17 @@ public sealed class PrintProgressDialog : BrandForm
             try
             {
                 var page = _pages[_start + i];
+                GodexPrintJob.ValidateMediaGap(page, _settings);
                 if (_plugin is not null) LabelPrintLayout.EnsurePrintWidth(page, _plugin.MaxPrintWidthMm);
                 using var bitmap = LabelPrintRenderer.Render(page, _settings, dpiX, dpiY, validateForPrint: true);
+                if (_settings.Copies > 1)
+                {
+                    var alternate = LabelPrintPages.ForCopy(page, 1, _count);
+                    if (!ReferenceEquals(alternate, page))
+                    {
+                        using var alternateBitmap = LabelPrintRenderer.Render(alternate, _settings, dpiX, dpiY, validateForPrint: true);
+                    }
+                }
             }
             catch (InvalidDataException ex)
             { throw new InvalidDataException(string.Format(L10n.T("Print.PageError"), _start + i + 1, ex.Message), ex); }
@@ -151,7 +160,7 @@ public sealed class PrintProgressDialog : BrandForm
         {
             if (token.IsCancellationRequested) { e.Cancel = true; e.HasMorePages = false; return; }
             var graphics = e.Graphics ?? throw new InvalidDataException(L10n.T("Print.InvalidGraphics"));
-            var page = _pages[_start + (int)(index % _count)];
+            var page = LabelPrintPages.ForCopy(_pages[_start + (int)(index % _count)], index / _count, _count);
             using var bitmap = LabelPrintRenderer.Render(page, _settings, graphics.DpiX, graphics.DpiY, validateForPrint: true);
             LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY);
             index++;

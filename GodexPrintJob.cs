@@ -67,15 +67,23 @@ public static class GodexPrintJob
             foreach (var page in pages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                ValidateMediaGap(page, settings);
                 _ = RenderPage(page, settings, render);
+                if (settings.Copies > 1)
+                {
+                    var alternate = LabelPrintPages.ForCopy(page, 1, pages.Count);
+                    if (!ReferenceEquals(alternate, page))
+                        _ = RenderPage(alternate, settings, render);
+                }
             }
 
             using var target = await OpenTargetAsync(settings, cancellationToken).ConfigureAwait(false);
             long total = (long)pages.Count * settings.Copies, done = 0;
             for (var copy = 0; copy < settings.Copies; copy++)
-            foreach (var page in pages)
+            foreach (var source in pages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var page = LabelPrintPages.ForCopy(source, copy, pages.Count);
                 var raster = RenderPage(page, settings, render);
                 var command = EncodePage(page, settings, raster);
                 await target.WritePageAsync(command, cancellationToken).ConfigureAwait(false);
@@ -150,6 +158,12 @@ public static class GodexPrintJob
             throw new InvalidDataException(string.Format(L10n.T("Setup.MediaLimits"), 25.4, 118, 4, 762));
     }
 
+    internal static void ValidateMediaGap(LabelLayout page, PrintSettings settings)
+    {
+        if (page.AlternateNotch is not null && settings.MediaGapMm != 0)
+            throw new InvalidDataException(L10n.T("Print.ContinuousMediaGap"));
+    }
+
     private static void ValidateRaster(LabelLayout page, GodexRaster raster)
     {
         if (raster.Width != (int)Math.Round(page.MediaWidthUm * Dpi / 25_400d) ||
@@ -167,6 +181,7 @@ public static class GodexPrintJob
     {
         ValidateMedia(page);
         ValidateParameters(settings);
+        ValidateMediaGap(page, settings);
         ValidateRaster(page, raster);
         var width = Math.Min(Units.UmToMm(page.MediaWidthUm), HeadWidthMm);
         var length = Units.UmToMm(page.MediaHeightUm);

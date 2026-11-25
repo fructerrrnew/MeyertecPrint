@@ -26,6 +26,8 @@ public sealed class LabelPrintLayout
             geometry.WidthUm <= 0 || geometry.LeftUm < 0 || geometry.TopUm < 0 ||
             geometry.RightUm < 0 || geometry.GapBetweenUm < 0 || geometry.GapBottomUm < 0)
             throw new InvalidDataException(L10n.T("Print.InvalidGeometry"));
+        if (layout.AlternateNotch is { } notch && !notch.Fits(layout.MediaWidthUm, layout.MediaHeightUm))
+            throw new InvalidDataException(L10n.T("Print.InvalidNotch"));
 
         var cells = new List<LabelCellPosition>();
         long y = geometry.TopUm, maxWidth = 0;
@@ -97,13 +99,16 @@ internal sealed class LabelRasterPlan
 {
     public int Width { get; }
     public int Height { get; }
+    public System.Drawing.Rectangle? Cutout { get; }
     public IReadOnlyList<(CellContent Content, System.Drawing.Rectangle Bounds)> Elements { get; }
 
-    private LabelRasterPlan(int width, int height, List<(CellContent, System.Drawing.Rectangle)> elements)
+    private LabelRasterPlan(int width, int height, List<(CellContent, System.Drawing.Rectangle)> elements,
+        System.Drawing.Rectangle? cutout)
     {
         Width = width;
         Height = height;
         Elements = elements;
+        Cutout = cutout;
     }
 
     public static LabelRasterPlan Create(LabelLayout layout, PrintSettings settings, float dpiX, float dpiY)
@@ -146,7 +151,15 @@ internal sealed class LabelRasterPlan
                 throw new InvalidDataException(L10n.T("Print.DoesNotFit"));
             elements.Add((item.Content, Rectangle(item.XUm, item.YUm, item.WidthUm, item.HeightUm)));
         }
-        return new LabelRasterPlan(width, height, elements);
+        System.Drawing.Rectangle? cutout = null;
+        if (layout.ActiveNotch is { } notch)
+        {
+            // The recess belongs to the stock. Printer X/Y adjustments move the artwork only.
+            var top = notch.CenterYUm - notch.HeightUm / 2;
+            cutout = System.Drawing.Rectangle.FromLTRB(Dot(layout.MediaWidthUm - notch.DepthUm, dpiX),
+                Dot(top, dpiY), width, Dot(top + notch.HeightUm, dpiY));
+        }
+        return new LabelRasterPlan(width, height, elements, cutout);
     }
 
     private static int Dot(double positionUm, float dpi) => checked((int)Math.Round(positionUm * dpi / 25_400d));

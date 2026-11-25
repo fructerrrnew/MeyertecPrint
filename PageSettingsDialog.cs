@@ -28,6 +28,8 @@ public sealed class PageSettingsDialog : BrandForm
         BackColor = Theme.Surface;
         _width.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaWidthUm), _width.Minimum, _width.Maximum);
         _height.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaHeightUm), _height.Minimum, _height.Maximum);
+        var fixedStock = layout.AlternateNotch is not null;
+        _width.Enabled = _height.Enabled = !fixedStock;
         var fields = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(15), ColumnCount = 2, RowCount = 3 };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); fields.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -38,7 +40,7 @@ public sealed class PageSettingsDialog : BrandForm
         fields.Controls.Add(_width, 1, 0);
         fields.Controls.Add(new Label { Text = _height.AccessibleName, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 1);
         fields.Controls.Add(_height, 1, 1);
-        var hint = new Label { Text = L10n.T("Setup.MeasureMedia"), Dock = DockStyle.Fill, ForeColor = Theme.SecondaryText };
+        var hint = new Label { Text = L10n.T(fixedStock ? "Setup.FixedNotchedStock" : "Setup.MeasureMedia"), Dock = DockStyle.Fill, ForeColor = Theme.SecondaryText };
         fields.Controls.Add(hint, 0, 2); fields.SetColumnSpan(hint, 2);
         var ok = new Button { Text = L10n.T("Dialog.Apply") };
         ok.Click += (_, _) =>

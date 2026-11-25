@@ -769,15 +769,16 @@ public partial class MainForm : BrandForm
 
     // ---------------- РЕДАКТОР / ПРЕДПРОСМОТР ----------------
 
-    /// <summary>Загружает макет проекта в редактор и переключает на вкладку «Редактор».</summary>
+    /// <summary>Загружает макет и показывает ленту с чередующимися секциями.</summary>
     private void LoadEditorFromProject()
     {
         if (_project is null)
             return;
         _editor.LoadLayout(_project.Ribbon.GetLayout(),
             _project.Ribbon.LabelTypeName ?? "Custom label", _project.Print);
-        _tabs.SelectedTab = _editorTab;
-        if (_tabs.Visible) _editor.FocusCanvas();
+        _tabs.SelectedTab = _editor.Layout.AlternateNotch is not null && _project.Ribbon.Labels.Count > 0
+            ? _ribbonTab : _editorTab;
+        if (_tabs.Visible && _tabs.SelectedTab == _editorTab) _editor.FocusCanvas();
     }
 
     /// <summary>Редактор изменил макет — синхронизируем с проектом и помечаем как изменённый.</summary>
@@ -936,6 +937,11 @@ public partial class MainForm : BrandForm
         }
 
         _editor.CommitPendingEdit();
+        if (_editor.Layout.AlternateNotch is not null)
+        {
+            BrandMessageBox.Show(this, L10n.T("Wstx.NotchedStock"), AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         if (BrandMessageBox.Show(this, L10n.T("Wstx.CompatibilityWarning"), AppTitle,
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;

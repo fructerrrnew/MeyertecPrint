@@ -8,7 +8,8 @@ namespace MeyertecPrint;
 /// <summary>Отрисовка одной физической этикетки без рамок редактора.</summary>
 public static class LabelPrintRenderer
 {
-    public static Bitmap Render(LabelLayout layout, PrintSettings settings, float dpiX, float dpiY, bool validateForPrint = false)
+    public static Bitmap Render(LabelLayout layout, PrintSettings settings, float dpiX, float dpiY,
+        bool validateForPrint = false, bool showMedia = false)
     {
         var plan = LabelRasterPlan.Create(layout, settings ?? new PrintSettings(), dpiX, dpiY);
         var bitmap = new Bitmap(plan.Width, plan.Height, PixelFormat.Format32bppArgb);
@@ -21,6 +22,8 @@ public static class LabelPrintRenderer
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
             foreach (var element in plan.Elements)
                 DrawContent(g, element.Content, element.Bounds, dpiY, validateForPrint);
+            if (plan.Cutout is { Width: > 0, Height: > 0 } cutout)
+                DrawCutout(g, cutout, dpiX / dpiY, showMedia);
             return bitmap;
         }
         catch
@@ -28,6 +31,23 @@ public static class LabelPrintRenderer
             bitmap.Dispose();
             throw;
         }
+    }
+
+    private static void DrawCutout(Graphics graphics, Rectangle bounds, float horizontalScale, bool showMedia)
+    {
+        var curveHeight = Math.Min(2f * bounds.Width / horizontalScale, bounds.Height);
+        var curveWidth = curveHeight * horizontalScale;
+        var top = bounds.Top + (bounds.Height - curveHeight) / 2;
+        var middle = bounds.Left + curveWidth / 2;
+        using var path = new GraphicsPath();
+        path.AddArc(bounds.Left, top, curveWidth, curveHeight, 90, 180);
+        path.AddLine(middle, top, bounds.Right, top);
+        path.AddLine(bounds.Right, top, bounds.Right, top + curveHeight);
+        path.CloseFigure();
+
+        using var fill = new SolidBrush(!showMedia ? Color.White :
+            SystemInformation.HighContrast ? SystemColors.WindowText : Theme.Canvas);
+        graphics.FillPath(fill, path);
     }
 
     /// <summary>Рисует готовую этикетку в точках устройства с учётом аппаратного поля.</summary>

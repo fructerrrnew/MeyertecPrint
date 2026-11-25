@@ -401,7 +401,7 @@ public partial class LabelEditorControl : UserControl
         {
             _undo.Push(_layout.Clone());
             var g = _layout.Geometry;
-            if (_layout.Rows.Count == 1 && _layout.Rows[0].Cells.Count == 1 && g.LabelsInRow == 1 &&
+            if (_layout.AlternateNotch is null && _layout.Rows.Count == 1 && _layout.Rows[0].Cells.Count == 1 && g.LabelsInRow == 1 &&
                 g.WidthUm == _layout.MediaWidthUm && g.HeightUm == _layout.MediaHeightUm &&
                 _layout.Rows[0].HeightUm == g.HeightUm && _layout.Rows[0].Cells[0].WidthUm == g.WidthUm &&
                 g.LeftUm == 0 && g.RightUm == 0 && g.TopUm == 0 && g.GapBetweenUm == 0 && g.GapBottomUm == 0)
@@ -768,6 +768,7 @@ public partial class LabelEditorControl : UserControl
             Geometry = type.Geometry.Clone(),
             MediaWidthUm = previous.MediaWidthUm,
             MediaHeightUm = previous.MediaHeightUm,
+            AlternateNotch = previous.AlternateNotch,
             Objects = (previous.Objects ?? new()).Select(o => o.Clone()).ToList(),
         };
         for (var r = 0; r < previous.Rows.Count; r++)

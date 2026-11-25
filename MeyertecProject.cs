@@ -14,7 +14,7 @@ namespace MeyertecPrint;
 public class ProjectFile
 {
     public const string FileExtension = ".mprj";
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -165,6 +165,9 @@ public static class ProjectFileIo
         if (project.Ribbon?.Layout is { } layout &&
             (layout.MediaWidthUm <= 0 || layout.MediaWidthUm > 300_000 || layout.MediaHeightUm <= 0 || layout.MediaHeightUm > 762_000))
             throw new InvalidDataException(L10n.T("Print.InvalidMediaSize"));
+        if (project.Ribbon?.Layout is { AlternateNotch: { } notch } stock &&
+            (project.Version < 5 || !notch.Fits(stock.MediaWidthUm, stock.MediaHeightUm)))
+            throw new InvalidDataException(L10n.T("Print.InvalidNotch"));
         return project;
     }
 
@@ -189,6 +192,7 @@ public static class ProjectFileIo
     private static int RequiredVersion(ProjectFile project)
     {
         var layout = project.Ribbon?.Layout;
+        if (layout?.AlternateNotch is not null) return 5;
         if (project.TemplateId is not null || project.TemplateVersion is not null ||
             project.Print is { } print && (print.PrintBackend != "driver" || print.ConnectionKind == "serial" ||
                 print.SerialPort is not null || print.UsbDevice is not null || print.SerialBaudRate != 9600 ||
@@ -197,7 +201,7 @@ public static class ProjectFileIo
             layout is not null && layout.Rows.SelectMany(row => row.Cells).Select(cell => cell.Content)
                 .Concat((layout.Objects ?? []).Select(item => item.Content))
                 .Any(content => content.AutoFitText || content.InvertColors))
-            return ProjectFile.CurrentVersion;
+            return 4;
 
         var hasNewPrintSettings = !string.IsNullOrWhiteSpace(project.Print?.PrinterName) ||
             project.Print?.ConnectionKind == "ethernet" || (project.Print?.Copies ?? 1) != 1;

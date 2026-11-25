@@ -324,6 +324,24 @@ public static class SelfTest
         catch (InvalidDataException) { manualOverflow = true; }
         Check("print: ручной шрифт сверх рамки отклоняется", manualOverflow);
         Check("strip: длина учитывает межэтикеточный зазор", LabelSequence.CalculateLengthUm(30000, 3, 2000) == 94000);
+        var terminal = TemplateLibrary.LoadFile(Path.Combine(AppContext.BaseDirectory, "Catalog", "meyertec-terminal-50x10.mtemplate"));
+        var terminalStock = terminal.Layout.Clone();
+        terminalStock.Objects.Add(new LabelObject
+        {
+            WidthUm = terminalStock.MediaWidthUm, HeightUm = terminalStock.MediaHeightUm,
+            Content = new CellContent { Type = CellContentType.Text, Text = "X", InvertColors = true }
+        });
+        var stockPages = LabelPrintPages.CreateStockPreview(terminalStock);
+        using (var plain = LabelPrintRenderer.Render(stockPages[0], terminal.Print, 300, 300))
+        using (var printed = LabelPrintRenderer.Render(stockPages[1], terminal.Print, 300, 300))
+        using (var preview = LabelPrintRenderer.Render(stockPages[1], terminal.Print, 300, 300, showMedia: true))
+        {
+            Check("print: вырез убирает краску только на второй секции",
+                plain.Width == 591 && plain.Height == 118 && plain.GetPixel(584, 59).R < 128 &&
+                printed.GetPixel(584, 59).R == 255 && printed.GetPixel(584, 28).R < 128 &&
+                printed.GetPixel(534, 35).R < 128 && printed.GetPixel(530, 59).R < 128);
+            Check("preview: вырез виден на правом крае", preview.GetPixel(584, 59).R < 250);
+        }
         try
         {
             WstxIo.Write("raster formatting", fittedLayout, wstxPath);

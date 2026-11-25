@@ -124,6 +124,14 @@ public class LabelGeometry
     public long GapBottomUm { get; set; }  // Distance to the next label (снизу)
 }
 
+/// <summary>A recess in the right edge of the material, measured in microns.</summary>
+public sealed record MediaNotch(long DepthUm, long HeightUm, long CenterYUm)
+{
+    internal bool Fits(long widthUm, long heightUm) => DepthUm > 0 && DepthUm < widthUm &&
+        HeightUm > 0 && HeightUm <= heightUm && CenterYUm >= HeightUm / 2 &&
+        CenterYUm <= heightUm - (HeightUm - HeightUm / 2);
+}
+
 /// <summary>
 /// Макет этикетки: геометрия + сетка строк/ячеек.
 /// Аналог LabelStrip (rows → cells) из WAGO LabelDESIGNER.
@@ -134,6 +142,11 @@ public class LabelLayout
     // Значения по умолчанию сохраняют совместимость с прежними проектами 60 × 30 мм.
     public long MediaWidthUm { get; set; } = 60_000;
     public long MediaHeightUm { get; set; } = 30_000;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public MediaNotch? AlternateNotch { get; set; }
+    internal bool IsNotchedSection { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public MediaNotch? ActiveNotch => IsNotchedSection ? AlternateNotch : null;
     public LabelGeometry Geometry { get; set; } = new();
 
     public List<LabelRow> Rows { get; set; } = new();

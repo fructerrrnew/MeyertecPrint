@@ -32,6 +32,10 @@ public sealed class PrintSettingsDialog : BrandForm
     {
         Dock = DockStyle.Fill, AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(0, 5, 0, 0)
     };
+    private readonly Label _stockHint = new()
+    {
+        Dock = DockStyle.Fill, AutoSize = true, ForeColor = Theme.SecondaryText, Margin = new Padding(0, 5, 0, 0)
+    };
     private readonly Control _hostField;
     private readonly Control _queueField, _portField, _usbField, _serialField, _baudField, _gapField;
     private readonly Control _heatField, _stopField;
@@ -52,6 +56,7 @@ public sealed class PrintSettingsDialog : BrandForm
     };
     private sealed record ConnectionOption(string Key, string Caption) { public override string ToString() => Caption; }
     private readonly bool _forPrint;
+    private readonly bool _hasNotch;
     private readonly PrintSettings _original;
     private bool _updating;
     private bool _testing;
@@ -68,6 +73,7 @@ public sealed class PrintSettingsDialog : BrandForm
     {
         SuspendLayout();
         _forPrint = forPrint;
+        _hasNotch = layout.AlternateNotch is not null;
         _importedCount = importedCount;
         _original = project.Print ?? new PrintSettings();
         Text = L10n.T(forPrint ? "Setup.PrintTitle" : "PrintSettings.Title");
@@ -139,6 +145,8 @@ public sealed class PrintSettingsDialog : BrandForm
         Add(job, 7, _range);
         _summary.Visible = forPrint;
         Add(job, 8, _summary);
+        _stockHint.Visible = forPrint && _hasNotch;
+        Add(job, 9, _stockHint);
         _imported.CheckedChanged += (_, _) => UpdateRange();
         _from.ValueChanged += (_, _) => UpdateSummary();
         _to.ValueChanged += (_, _) => UpdateSummary();
@@ -161,6 +169,7 @@ public sealed class PrintSettingsDialog : BrandForm
             var width = (columns.ClientSize.Width - columns.Padding.Horizontal) / 2;
             var limit = new Size(Math.Max(1, width - printer.Margin.Horizontal - printer.Padding.Horizontal), 0);
             if (_driverHint.MaximumSize != limit) _driverHint.MaximumSize = limit;
+            if (_stockHint.MaximumSize != limit) _stockHint.MaximumSize = limit;
         };
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         scroll.Controls.Add(columns);
@@ -201,9 +210,10 @@ public sealed class PrintSettingsDialog : BrandForm
         _setStop.Checked = _original.CutOffsetMm.HasValue;
         _stop.Value = _original.CutOffsetMm is double stop && double.IsFinite(stop)
             ? (decimal)Math.Clamp(Math.Round(stop), 0, 40) : 0;
-        _gap.Value = Math.Clamp(_original.MediaGapMm, 0, 100);
+        _gap.Value = _hasNotch ? 0 : Math.Clamp(_original.MediaGapMm, 0, 100);
         _width.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaWidthUm), _width.Minimum, _width.Maximum);
         _height.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaHeightUm), _height.Minimum, _height.Maximum);
+        _width.Enabled = _height.Enabled = _gap.Enabled = !_hasNotch;
         _offsetX.Value = Math.Clamp((decimal)(project.Print?.OffsetXMm ?? 0), _offsetX.Minimum, _offsetX.Maximum);
         _offsetY.Value = Math.Clamp((decimal)(project.Print?.OffsetYMm ?? 0), _offsetY.Minimum, _offsetY.Maximum);
         _copies.Value = Math.Clamp(project.Print?.Copies ?? 1, (int)_copies.Minimum, (int)_copies.Maximum);
@@ -242,6 +252,7 @@ public sealed class PrintSettingsDialog : BrandForm
     {
         var count = Math.Max(0, _to.Value - _from.Value + 1) * _copies.Value;
         _summary.Text = string.Format(L10n.T("Setup.PageTotal"), count);
+        if (_hasNotch) _stockHint.Text = L10n.T(_from.Value % 2 == 0 ? "Print.StartNotched" : "Print.StartPlain");
     }
 
     private static NumericUpDown Number(decimal minimum, decimal maximum, decimal value, int decimals = 3) => new()

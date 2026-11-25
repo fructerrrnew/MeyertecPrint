@@ -6,7 +6,8 @@ namespace MeyertecPrint;
 /// <summary>Renders the project geometry to printer dots on non-Windows systems.</summary>
 internal static class LabelRaster
 {
-    public static SKBitmap Render(LabelLayout layout, PrintSettings settings, int dpi, bool validateForPrint = false)
+    public static SKBitmap Render(LabelLayout layout, PrintSettings settings, int dpi,
+        bool validateForPrint = false, bool showMedia = false)
     {
         var plan = LabelRasterPlan.Create(layout, settings, dpi, dpi);
         var bitmap = new SKBitmap(plan.Width, plan.Height, SKColorType.Bgra8888, SKAlphaType.Opaque);
@@ -16,6 +17,8 @@ internal static class LabelRaster
             canvas.Clear(SKColors.White);
             foreach (var (content, bounds) in plan.Elements)
                 DrawElement(canvas, content, bounds, dpi, validateForPrint);
+            if (plan.Cutout is { Width: > 0, Height: > 0 } cutout)
+                DrawCutout(canvas, cutout, showMedia);
             return bitmap;
         }
         catch
@@ -23,6 +26,20 @@ internal static class LabelRaster
             bitmap.Dispose();
             throw;
         }
+    }
+
+    private static void DrawCutout(SKCanvas canvas, Rectangle bounds, bool showMedia)
+    {
+        var diameter = Math.Min(2f * bounds.Width, bounds.Height);
+        var top = bounds.Top + (bounds.Height - diameter) / 2;
+        using var path = new SKPath();
+        path.ArcTo(new SKRect(bounds.Left, top, bounds.Left + diameter, top + diameter), 90, 180, true);
+        path.LineTo(bounds.Right, top);
+        path.LineTo(bounds.Right, top + diameter);
+        path.Close();
+
+        using var fill = new SKPaint { Color = showMedia ? new SKColor(225, 232, 236) : SKColors.White };
+        canvas.DrawPath(path, fill);
     }
 
     private static void DrawElement(SKCanvas canvas, CellContent content, Rectangle bounds, int dpi, bool validateForPrint)

@@ -192,6 +192,7 @@ public static class WstxIo
     /// <summary>Записывает макет в .wstx (мкм).</summary>
     public static void Write(string name, LabelLayout layout, string path)
     {
+        if (layout.AlternateNotch is not null) throw new InvalidDataException(L10n.T("Wstx.NotchedStock"));
         var fullPath = Path.GetFullPath(path);
         var temp = Path.Combine(Path.GetDirectoryName(fullPath)!, "." + Path.GetFileName(fullPath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         try { WriteCore(name, layout, temp); File.Move(temp, fullPath, true); }

@@ -12,6 +12,7 @@ public sealed class LabelSequenceView : Control
     private IReadOnlyList<LabelLayout> _pages = [];
     private PrintSettings _settings = new();
     private double _aspectRatio = 2;
+    private bool _hasNotchedStock;
     private int _selectedIndex = -1;
     private int _visiblePages = 1;
 
@@ -54,9 +55,11 @@ public sealed class LabelSequenceView : Control
         ReleaseThumbnails();
         _pages = pages;
         _settings = settings;
+        _hasNotchedStock = false;
         if (pages.Count > 0)
         {
             var first = pages[0];
+            _hasNotchedStock = first.AlternateNotch is not null;
             _aspectRatio = Math.Max(1d, first.MediaWidthUm) / Math.Max(1d, first.MediaHeightUm);
         }
         _selectedIndex = Math.Clamp(_selectedIndex, -1, pages.Count - 1);
@@ -121,7 +124,7 @@ public sealed class LabelSequenceView : Control
                 var picture = new Rectangle(area.Left + (area.Width - size.Width) / 2,
                     area.Top + (area.Height - size.Height) / 2, size.Width, size.Height);
                 e.Graphics.DrawImage(image, picture);
-                e.Graphics.DrawRectangle(SystemPens.WindowFrame, picture);
+                if (!_hasNotchedStock) e.Graphics.DrawRectangle(SystemPens.WindowFrame, picture);
             }
             else
                 TextRenderer.DrawText(e.Graphics, cached.Error, Font, area, Theme.ErrorText,
@@ -150,7 +153,7 @@ public sealed class LabelSequenceView : Control
         if (_thumbnails.TryGetValue(index, out var cached)) return cached;
         try
         {
-            using var raster = LabelPrintRenderer.Render(_pages[index], _settings, 300, 300);
+            using var raster = LabelPrintRenderer.Render(_pages[index], _settings, 300, 300, showMedia: true);
             var scale = Math.Min(1d, LogicalToDeviceUnits(280) / (double)Math.Max(raster.Width, raster.Height));
             var thumbnailSize = new Size(Math.Max(1, (int)(raster.Width * scale)), Math.Max(1, (int)(raster.Height * scale)));
             cached = (new Bitmap(raster, thumbnailSize), null);

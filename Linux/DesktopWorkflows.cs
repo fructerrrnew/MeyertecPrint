@@ -19,6 +19,12 @@ internal sealed partial class LinuxMainWindow
         var details = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var render = new Image { Height = 160, Stretch = Stretch.Uniform };
         var canvas = new LayoutCanvas { Height = 160 };
+        var strip = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+        var sections = Enumerable.Range(0, 3).Select(_ => new LayoutCanvas
+        {
+            Width = 260, Height = 52, PaperInset = new Thickness(2)
+        }).ToArray();
+        foreach (var section in sections) strip.Children.Add(section);
         Bitmap? custom = null;
         var templates = _templates.GetAll();
         var dialog = DialogWindow(Tr("Библиотека шаблонов", "Template library"), body, 580, 765);
@@ -30,6 +36,7 @@ internal sealed partial class LinuxMainWindow
         body.Children.Add(details);
         body.Children.Add(render);
         body.Children.Add(canvas);
+        body.Children.Add(strip);
         buttons.Children.Add(import);
         buttons.Children.Add(use);
         buttons.Children.Add(cancel);
@@ -41,10 +48,10 @@ internal sealed partial class LinuxMainWindow
             custom?.Dispose();
             custom = null;
             canvas.Clear();
+            foreach (var section in sections) section.Clear();
             var selected = list.SelectedIndex;
             use.IsEnabled = selected >= 0 && selected < templates.Count;
-            render.IsVisible = false;
-            canvas.IsVisible = use.IsEnabled;
+            render.IsVisible = canvas.IsVisible = strip.IsVisible = false;
             if (!use.IsEnabled)
             {
                 details.Text = Tr("Выберите шаблон или импортируйте файл .mtemplate.", "Choose a template or import an .mtemplate file.");
@@ -53,6 +60,8 @@ internal sealed partial class LinuxMainWindow
             var t = templates[selected];
             details.Text = $"{t.Name} · v{t.Version} · {Units.FormatMm(t.Layout.MediaWidthUm)} × {Units.FormatMm(t.Layout.MediaHeightUm)}" +
                 (string.IsNullOrWhiteSpace(t.Material) ? "" : "\n" + t.Material);
+            if (t.Layout.AlternateNotch is not null)
+                details.Text += "\n" + L10n.T("Template.AlternatingNotch");
             if (t.PreviewPngBase64 is { Length: > 0 } preview)
             {
                 try
@@ -61,11 +70,21 @@ internal sealed partial class LinuxMainWindow
                     custom = new Bitmap(data);
                     render.Source = custom;
                     render.IsVisible = true;
-                    canvas.IsVisible = false;
                 }
                 catch (Exception ex) when (ex is FormatException or ArgumentException or IOException or InvalidOperationException) { }
             }
-            if (!render.IsVisible) canvas.SetPage(t.Layout, t.Print, [], -1, 96);
+            if (render.IsVisible) return;
+            if (t.Layout.AlternateNotch is null)
+            {
+                canvas.IsVisible = true;
+                canvas.SetPage(t.Layout, t.Print, [], -1, 96);
+                return;
+            }
+
+            var pages = LabelPrintPages.CreateStockPreview(t.Layout);
+            strip.IsVisible = true;
+            for (var i = 0; i < sections.Length; i++)
+                sections[i].SetPage(pages[i], t.Print, [], -1, showMedia: true);
         }
 
         void Reload(string? id = null)
@@ -98,7 +117,12 @@ internal sealed partial class LinuxMainWindow
         dialog.KeyDown += (_, e) => { if (e.Key == Key.Escape) dialog.Close(); };
         Reload(_project?.TemplateId);
         try { return await dialog.ShowDialog<LabelTemplate?>(this); }
-        finally { canvas.Clear(); custom?.Dispose(); }
+        finally
+        {
+            canvas.Clear();
+            foreach (var section in sections) section.Clear();
+            custom?.Dispose();
+        }
     }
 
     private async Task SaveTemplate()
@@ -116,14 +140,14 @@ internal sealed partial class LinuxMainWindow
         form.Children.Add(custom);
         form.Children.Add(export);
         if (!await ConfirmForm(Tr("Сохранить шаблон", "Save template"), form, Tr("Сохранить", "Save"))) return;
-        byte[] preview;
+        byte[]? preview = null;
         if (custom.IsChecked == true)
         {
             var file = await PickOpen(new Avalonia.Platform.Storage.FilePickerFileType("PNG") { Patterns = ["*.png"] });
             if (file is null) return;
             preview = await ReadImage(file);
         }
-        else
+        else if (Layout.AlternateNotch is null)
         {
             using var raster = LabelRaster.Render(Layout, _project!.Print, 96);
             using var image = SKImage.FromBitmap(raster);
@@ -422,7 +446,8 @@ internal sealed partial class LinuxMainWindow
             var number = (int)(index.Value ?? 1);
             previous.IsEnabled = number > 1;
             next.IsEnabled = number < pages.Count;
-            preview.SetPage(pages[number - 1], _project.Print, [], -1, GodexPrintJob.Dpi, validateForPrint: true);
+            preview.SetPage(pages[number - 1], _project.Print, [], -1, GodexPrintJob.Dpi,
+                validateForPrint: true, showMedia: true);
         }
         index.ValueChanged += (_, _) => Refresh();
         previous.Click += (_, _) => index.Value = (index.Value ?? 1) - 1;
@@ -475,7 +500,9 @@ internal sealed partial class LinuxMainWindow
         form.Children.Add(hostFields);
         var offsetX = Number((decimal)previous.OffsetXMm, -50, 50);
         var offsetY = Number((decimal)previous.OffsetYMm, -50, 50);
-        var gap = Number(previous.MediaGapMm, 0, 100);
+        var patterned = Layout.AlternateNotch is not null;
+        var gap = Number(patterned ? 0 : previous.MediaGapMm, 0, 100);
+        gap.IsEnabled = !patterned;
         var heat = Number(previous.Temperature, 0, 19, 1);
         var cut = Number(previous.CutOffsetMm is { } offset ? (decimal)offset : null, 0, 40, 1);
         var start = Number(1, 1, Pages.Count, 1);
@@ -488,6 +515,19 @@ internal sealed partial class LinuxMainWindow
         Field(form, Tr("Отступ остановки / отреза, мм", "Stop / cut offset, mm"), cut);
         Field(form, Tr("Печатать с этикетки", "Print from label"), start);
         Field(form, Tr("Печатать по этикетку", "Print through label"), end);
+        if (patterned)
+        {
+            var alignment = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            void RefreshAlignment()
+            {
+                alignment.Text = (int)(start.Value ?? 1) % 2 == 0
+                    ? Tr("Совместите начало печати с секцией с вырезом.", "Align printing with a section that has a notch.")
+                    : Tr("Совместите начало печати с прямоугольной секцией.", "Align printing with a rectangular section.");
+            }
+            start.ValueChanged += (_, _) => RefreshAlignment();
+            RefreshAlignment();
+            form.Children.Add(alignment);
+        }
         Field(form, Tr("Количество копий", "Copies"), copies);
         var send = new CheckBox { Content = Tr("Отправить задание после сохранения настроек", "Send job after saving settings") };
         form.Children.Add(send);
@@ -501,7 +541,7 @@ internal sealed partial class LinuxMainWindow
             UsbDevice = EmptyToNull(usb.Text), SerialPort = EmptyToNull(serial.Text),
             SerialBaudRate = baudRates[baud.SelectedIndex], NetworkHost = EmptyToNull(host.Text),
             Copies = (int)(copies.Value ?? 1), OffsetXMm = (double)(offsetX.Value ?? 0), OffsetYMm = (double)(offsetY.Value ?? 0),
-            MediaGapMm = gap.Value ?? 0, Temperature = heat.Value is { } temperature ? (int)temperature : null,
+            MediaGapMm = patterned ? 0 : gap.Value ?? 0, Temperature = heat.Value is { } temperature ? (int)temperature : null,
             CutOffsetMm = cut.Value is { } stop ? (double)stop : null
         };
         project.Print = settings;

@@ -122,6 +122,7 @@ public sealed class PreviewDialog : BrandForm
     private sealed class StripPreviewPanel : Panel
     {
         private Bitmap? _preview;
+        private bool _hasNotchedStock;
         private readonly Label _error;
 
         public StripPreviewPanel()
@@ -141,7 +142,8 @@ public sealed class PreviewDialog : BrandForm
         {
             _preview?.Dispose();
             _preview = null;
-            try { _preview = LabelPrintRenderer.Render(layout, settings, dpiX, dpiY, validateForPrint: true); }
+            _hasNotchedStock = layout.AlternateNotch is not null;
+            try { _preview = LabelPrintRenderer.Render(layout, settings, dpiX, dpiY, validateForPrint: true, showMedia: true); }
             catch (Exception ex) { _error.Text = ex.Message; }
             _error.Visible = _preview is null;
             Invalidate();
@@ -158,7 +160,7 @@ public sealed class PreviewDialog : BrandForm
             var width = Math.Max(1, (int)(_preview.Width * factor));
             var height = Math.Max(1, (int)(_preview.Height * factor));
             var bounds = new Rectangle((Width - width) / 2, (Height - height) / 2, width, height);
-            if (!SystemInformation.HighContrast)
+            if (!_hasNotchedStock && !SystemInformation.HighContrast)
             {
                 var shadowBounds = bounds;
                 shadowBounds.Offset(LogicalToDeviceUnits(4), LogicalToDeviceUnits(4));
@@ -168,8 +170,11 @@ public sealed class PreviewDialog : BrandForm
             e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
             e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
             e.Graphics.DrawImage(_preview, bounds);
-            using var edge = new Pen(Theme.SecondaryText);
-            e.Graphics.DrawRectangle(edge, bounds);
+            if (!_hasNotchedStock)
+            {
+                using var edge = new Pen(Theme.SecondaryText);
+                e.Graphics.DrawRectangle(edge, bounds);
+            }
         }
 
         protected override void Dispose(bool disposing)

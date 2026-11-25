@@ -9,9 +9,9 @@ namespace MeyertecPrint;
 public sealed class LabelTemplate
 {
     public const string FileExtension = ".mtemplate";
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
-    [JsonRequired] public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+    [JsonRequired] public int SchemaVersion { get; set; } = 1;
     [JsonRequired] public string Id { get; set; } = string.Empty;
     [JsonRequired] public int Version { get; set; } = 1;
     [JsonRequired] public string Name { get; set; } = string.Empty;
@@ -37,7 +37,8 @@ public sealed class LabelTemplate
                 LabelTypeName = Name,
                 LabelWidthMm = Units.UmToMm(Layout.Geometry.WidthUm),
                 LabelHeightMm = Units.UmToMm(Layout.Geometry.HeightUm),
-                Layout = Layout.Clone()
+                Layout = Layout.Clone(),
+                Labels = LabelPrintPages.CreateStockSampleRecords(Layout)
             }
         };
     }
@@ -49,6 +50,7 @@ public sealed class LabelTemplate
         var layout = project.Ribbon.GetLayout();
         var template = new LabelTemplate
         {
+            SchemaVersion = layout.AlternateNotch is null ? 1 : CurrentSchemaVersion,
             Id = previous?.Id ?? Guid.NewGuid().ToString("N"),
             Version = previous?.NextVersion() ?? 1,
             Name = name.Trim(),
@@ -67,6 +69,7 @@ public sealed class LabelTemplate
     {
         var template = new LabelTemplate
         {
+            SchemaVersion = SchemaVersion,
             Id = Id,
             Version = NextVersion(),
             Name = Name,
@@ -207,7 +210,7 @@ public sealed class TemplateLibrary
 
     internal static void Validate(LabelTemplate? template)
     {
-        if (template is null || template.SchemaVersion != LabelTemplate.CurrentSchemaVersion ||
+        if (template is null || template.SchemaVersion is < 1 or > LabelTemplate.CurrentSchemaVersion ||
             !IsValidId(template.Id) || template.Version < 1 || string.IsNullOrWhiteSpace(template.Name) ||
             template.Name.Length > 200 || template.Material is null || template.Material.Length > 200)
             throw Error("Invalid template format, identifier, version or name.", "Проверьте формат, идентификатор, версию и название шаблона.");
@@ -219,6 +222,13 @@ public sealed class TemplateLibrary
             settings.MediaGapMm < 0 ||
             settings.CutOffsetMm is double cut && !double.IsFinite(cut))
             throw Error("Invalid layout or print profile.", "Проверьте геометрию шаблона и параметры печати.");
+        if (layout.AlternateNotch is not null)
+        {
+            if (template.SchemaVersion < 2)
+                throw Error("An alternating notch requires template schema 2.", "Для чередующегося выреза нужен формат шаблона версии 2.");
+            if (settings.MediaGapMm != 0)
+                throw new InvalidDataException(L10n.T("Print.ContinuousMediaGap"));
+        }
 
         try
         {

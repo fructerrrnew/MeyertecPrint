@@ -9,6 +9,8 @@
   <ItemGroup>
     <PackageReference Include="ExcelDataReader" Version="3.9.0" />
     <PackageReference Include="ExcelNumberFormat" Version="1.2.0" />
+    <Content Include="../../Catalog/meyertec-terminal-50x10.mtemplate" Link="Catalog/meyertec-terminal-50x10.mtemplate"
+             CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../CsvReader.cs" Link="CsvReader.cs" />
     <Compile Include="../../CsvBatch.cs" Link="CsvBatch.cs" />
     <Compile Include="../../SpreadsheetReader.cs" Link="SpreadsheetReader.cs" />

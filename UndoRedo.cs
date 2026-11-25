@@ -74,6 +74,8 @@ public static class LayoutClone
             Geometry = source.Geometry.Clone(),
             MediaWidthUm = source.MediaWidthUm,
             MediaHeightUm = source.MediaHeightUm,
+            AlternateNotch = source.AlternateNotch,
+            IsNotchedSection = source.IsNotchedSection,
             Rows = source.Rows.Select(r => r.Clone()).ToList(),
             Objects = (source.Objects ?? new()).Select(o => o.Clone()).ToList(),
         };

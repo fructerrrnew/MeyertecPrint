@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "id": "meyertec-terminal-50x10",
+  "version": 1,
+  "name": "Terminal marker · 50 × 10 mm",
+  "material": "Continuous terminal marking strip",
+  "source": "Marker dimensions supplied by the user; notch proportions estimated from the reference photo.",
+  "printerModel": "G530",
+  "layout": {
+    "mediaWidthUm": 50000,
+    "mediaHeightUm": 10000,
+    "alternateNotch": { "depthUm": 5000, "heightUm": 5000, "centerYUm": 5000 },
+    "geometry": { "labelsInRow": 1, "widthUm": 43000, "heightUm": 8000, "leftUm": 1000, "topUm": 1000, "rightUm": 6000, "gapBottomUm": 1000 },
+    "rows": [{ "heightUm": 8000, "cells": [{ "widthUm": 43000 }] }],
+    "objects": [
+      {
+        "xUm": 1000,
+        "yUm": 1000,
+        "widthUm": 43000,
+        "heightUm": 8000,
+        "content": { "type": "text", "text": "X1", "autoFitText": true }
+      }
+    ]
+  },
+  "print": { "copies": 1, "mediaGapMm": 0 }
+}
