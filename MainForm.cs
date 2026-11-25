@@ -1015,8 +1015,10 @@ public partial class MainForm : BrandForm
         if (hasProject)
         {
             var gapUm = Units.MmToUm((double)Math.Clamp(_project!.Print.MediaGapMm, 0, 762));
-            var length = LabelSequence.CalculateLengthUm(_editor.Layout.MediaHeightUm, _ribbonList.Items.Count, gapUm);
+            var length = LabelSequence.CalculateFeedLengthUm(_editor.Layout, _ribbonList.Items.Count, gapUm);
             _ribbonHint.Text = string.Format(L10n.T("Ribbon.TotalLength"), Units.UmToMm(length), L10n.T("Unit.Mm"));
+            if (_editor.Layout.AlternateNotch is not null)
+                _ribbonHint.Text += "  ·  " + L10n.T("Ribbon.SkipNotchedSections");
         }
 
         _statusLeft.Text = string.Format(L10n.T("Status.Records"), _ribbonList.Items.Count);

@@ -121,7 +121,8 @@ public sealed class PrintSettingsDialog : BrandForm
         Add(printer, 8, _driverHint);
 
         var job = Section("Setup.MediaSection");
-        Add(job, 1, LabeledField("Setup.Width", _width), LabeledField("Setup.Height", _height));
+        Add(job, 1, LabeledField("Setup.Width", _width),
+            LabeledField(_hasNotch ? "Setup.FeedPitch" : "Setup.Height", _height));
         Add(job, 2, LabeledField("Setup.OffsetX", _offsetX), LabeledField("Setup.OffsetY", _offsetY));
         Add(job, 3, LabeledField("Setup.Copies", _copies));
         _heatField = OptionalField("Godex.Darkness", _setHeat, _heat);
@@ -145,7 +146,7 @@ public sealed class PrintSettingsDialog : BrandForm
         Add(job, 7, _range);
         _summary.Visible = forPrint;
         Add(job, 8, _summary);
-        _stockHint.Visible = forPrint && _hasNotch;
+        _stockHint.Visible = _hasNotch;
         Add(job, 9, _stockHint);
         _imported.CheckedChanged += (_, _) => UpdateRange();
         _from.ValueChanged += (_, _) => UpdateSummary();
@@ -211,9 +212,10 @@ public sealed class PrintSettingsDialog : BrandForm
         _stop.Value = _original.CutOffsetMm is double stop && double.IsFinite(stop)
             ? (decimal)Math.Clamp(Math.Round(stop), 0, 40) : 0;
         _gap.Value = _hasNotch ? 0 : Math.Clamp(_original.MediaGapMm, 0, 100);
+        if (_hasNotch) _height.Minimum = 4;
         _width.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaWidthUm), _width.Minimum, _width.Maximum);
         _height.Value = Math.Clamp((decimal)Units.UmToMm(layout.MediaHeightUm), _height.Minimum, _height.Maximum);
-        _width.Enabled = _height.Enabled = _gap.Enabled = !_hasNotch;
+        _width.Enabled = _gap.Enabled = !_hasNotch;
         _offsetX.Value = Math.Clamp((decimal)(project.Print?.OffsetXMm ?? 0), _offsetX.Minimum, _offsetX.Maximum);
         _offsetY.Value = Math.Clamp((decimal)(project.Print?.OffsetYMm ?? 0), _offsetY.Minimum, _offsetY.Maximum);
         _copies.Value = Math.Clamp(project.Print?.Copies ?? 1, (int)_copies.Minimum, (int)_copies.Maximum);
@@ -252,7 +254,12 @@ public sealed class PrintSettingsDialog : BrandForm
     {
         var count = Math.Max(0, _to.Value - _from.Value + 1) * _copies.Value;
         _summary.Text = string.Format(L10n.T("Setup.PageTotal"), count);
-        if (_hasNotch) _stockHint.Text = L10n.T(_from.Value % 2 == 0 ? "Print.StartNotched" : "Print.StartPlain");
+        if (_hasNotch)
+        {
+            _stockHint.Text = L10n.T("Setup.FixedNotchedStock");
+            if (_forPrint)
+                _stockHint.Text += Environment.NewLine + L10n.T("Print.StartPlain");
+        }
     }
 
     private static NumericUpDown Number(decimal minimum, decimal maximum, decimal value, int decimals = 3) => new()
@@ -403,6 +410,8 @@ public sealed class PrintSettingsDialog : BrandForm
         _driverHint.Text = L10n.T(driver
             ? ethernet ? "Setup.NetworkHint" : serial ? "Godex.DriverSerialHint" : "Setup.DriverHint"
             : sdkUsb ? "Godex.SdkUsbHint" : serial ? sdk ? "Godex.SdkSerialPort" : "Godex.SerialHint" : "Godex.DirectHint");
+        if (driver && _hasNotch)
+            _driverHint.Text += Environment.NewLine + L10n.T("Print.ContinuousDriver");
         ShowStatus(driver && _queues.Items.Count == 0 ? L10n.T("Setup.NoQueues") : string.Empty, error: _forPrint);
     }
 

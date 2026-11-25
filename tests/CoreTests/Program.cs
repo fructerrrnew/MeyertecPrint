@@ -149,15 +149,30 @@ try
         terminalLayout.MediaWidthUm == 50_000 && terminalLayout.MediaHeightUm == 10_000 &&
         terminal.Print.MediaGapMm == 0 && terminalPages.Count == 3 &&
         terminal.Ribbon.Labels.All(item => !item.UseLayout && item.Fields["C0"] == "X1"));
-    Check("Right-edge notch alternates and continues across odd-sized copies",
-        terminalPages[0].ActiveNotch is null && terminalPages[1].ActiveNotch == notch && terminalPages[2].ActiveNotch is null &&
-        LabelPrintPages.ForCopy(terminalPages[0], 1, 3).ActiveNotch == notch &&
-        LabelPrintPages.ForCopy(terminalPages[1], 1, 3).ActiveNotch is null &&
-        LabelPrintPages.ForCopy(terminalPages[1], 1, 2).ActiveNotch == notch);
+    terminal.Ribbon.Labels[0].Fields["C0"] = "X2";
+    terminal.Ribbon.Labels[1].Fields["C0"] = "X3";
+    var printPages = LabelPrintPages.Create(terminalLayout, terminal.Ribbon.Labels, true);
+    Check("All records keep their order on full rectangular sections",
+        printPages.All(page => page.ActiveNotch is null) &&
+        printPages.Select(page => page.Objects[0].Content.Text).SequenceEqual(["X1", "X2", "X3"]));
+    Check("Each printable section uses two pitches, including the trailing notch",
+        LabelSequence.CalculateFeedLengthUm(terminalLayout, 3) == 60_000 &&
+        LabelSequence.CalculateFeedLengthUm(terminalLayout, 1) == 20_000 &&
+        LabelSequence.CalculateFeedLengthUm(layout, 3, 2_000) == 94_000);
+    var stockPreview = LabelPrintPages.CreateStockPreview(terminalLayout);
     var shifted = new PrintSettings { OffsetXMm = 0.25, OffsetYMm = 0.25 };
-    var notchedRaster = LabelRasterPlan.Create(terminalPages[1], shifted, 300, 300);
-    Check("The notch stays fixed on the media when artwork moves",
-        notchedRaster is { Width: 591, Height: 118, Cutout: { X: 531, Y: 30, Right: 591, Bottom: 89 } });
+    var notchedRaster = LabelRasterPlan.Create(stockPreview[1], shifted, 300, 300);
+    Check("The skipped section contains no artwork and keeps its physical notch in preview",
+        stockPreview[0].ActiveNotch is null && stockPreview[1].ActiveNotch == notch && stockPreview[2].ActiveNotch is null &&
+        notchedRaster is { Width: 591, Height: 118, Elements.Count: 0, Cutout: { X: 531, Y: 30, Right: 591, Bottom: 89 } });
+    var adjustedPitch = terminalLayout.Clone();
+    GeometryOperations.ResizeNotchedStockPitch(adjustedPitch, 6_000);
+    Check("Measured feed pitch scales content and notch in the feed direction only",
+        adjustedPitch.MediaWidthUm == 50_000 && adjustedPitch.MediaHeightUm == 6_000 &&
+        adjustedPitch.AlternateNotch == new MediaNotch(5_000, 3_000, 3_000) &&
+        adjustedPitch.Rows[0].HeightUm == 4_800 && adjustedPitch.Objects[0] is
+            { XUm: 1_000, WidthUm: 43_000, YUm: 600, HeightUm: 4_800, Content.Text: "X1" } &&
+        LabelRasterPlan.Create(adjustedPitch, terminal.Print, 300, 300).Height == 71);
     var terminalPath = Path.Combine(tmp, "terminal.mprj");
     ProjectFileIo.Save(terminal, terminalPath);
     var restoredTerminal = ProjectFileIo.Load(terminalPath);

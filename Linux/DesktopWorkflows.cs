@@ -440,6 +440,8 @@ internal sealed partial class LinuxMainWindow
         nav.Children.Add(next);
         var preview = new LayoutCanvas { Height = 360 };
         body.Children.Add(nav);
+        if (Layout.AlternateNotch is not null)
+            body.Children.Add(new TextBlock { Text = L10n.T("Ribbon.SkipNotchedSections"), TextWrapping = TextWrapping.Wrap });
         body.Children.Add(preview);
         void Refresh()
         {
@@ -516,18 +518,7 @@ internal sealed partial class LinuxMainWindow
         Field(form, Tr("Печатать с этикетки", "Print from label"), start);
         Field(form, Tr("Печатать по этикетку", "Print through label"), end);
         if (patterned)
-        {
-            var alignment = new TextBlock { TextWrapping = TextWrapping.Wrap };
-            void RefreshAlignment()
-            {
-                alignment.Text = (int)(start.Value ?? 1) % 2 == 0
-                    ? Tr("Совместите начало печати с секцией с вырезом.", "Align printing with a section that has a notch.")
-                    : Tr("Совместите начало печати с прямоугольной секцией.", "Align printing with a rectangular section.");
-            }
-            start.ValueChanged += (_, _) => RefreshAlignment();
-            RefreshAlignment();
-            form.Children.Add(alignment);
-        }
+            form.Children.Add(new TextBlock { Text = L10n.T("Print.StartPlain"), TextWrapping = TextWrapping.Wrap });
         Field(form, Tr("Количество копий", "Copies"), copies);
         var send = new CheckBox { Content = Tr("Отправить задание после сохранения настроек", "Send job after saving settings") };
         form.Children.Add(send);

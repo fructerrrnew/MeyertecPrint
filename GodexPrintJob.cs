@@ -23,16 +23,20 @@ public sealed class GodexRaster
     public static GodexRaster Create(int width, int height, Func<int, int, bool> isBlack)
     {
         ArgumentNullException.ThrowIfNull(isBlack);
-        if (width is < 1 or > 1_394 || height is < 1 or > 9_000)
-            throw new InvalidDataException(L10n.T("Godex.RasterSize"));
-        var stride = (width + 7) / 8;
-        var bits = new byte[stride * height];
+        var raster = Blank(width, height);
         for (var y = 0; y < height; y++)
         for (var x = 0; x < width; x++)
             if (isBlack(x, y))
-                bits[y * stride + x / 8] |= (byte)(0x80 >> (x % 8));
+                raster.Bits[y * raster.Stride + x / 8] |= (byte)(0x80 >> (x % 8));
 
-        return new GodexRaster(width, height, bits);
+        return raster;
+    }
+
+    internal static GodexRaster Blank(int width, int height)
+    {
+        if (width is < 1 or > 1_394 || height is < 1 or > 9_000)
+            throw new InvalidDataException(L10n.T("Godex.RasterSize"));
+        return new GodexRaster(width, height, new byte[((width + 7) / 8) * height]);
     }
 }
 
@@ -47,6 +51,7 @@ public static class GodexPrintJob
     public static IReadOnlyList<int> BaudRates { get; } = Array.AsReadOnly(new[] { 4800, 9600, 19200, 38400, 57600, 115200 });
     private const int HeadDots = 1248;
     private const double HeadWidthMm = 105.7;
+    private const int MaxPrintLengthUm = 762_000;
 
     public static Task SendAsync(PrintSettings settings, IReadOnlyList<LabelLayout> pages,
         Func<LabelLayout, PrintSettings, int, GodexRaster> render,
@@ -69,27 +74,84 @@ public static class GodexPrintJob
                 cancellationToken.ThrowIfCancellationRequested();
                 ValidateMediaGap(page, settings);
                 _ = RenderPage(page, settings, render);
-                if (settings.Copies > 1)
-                {
-                    var alternate = LabelPrintPages.ForCopy(page, 1, pages.Count);
-                    if (!ReferenceEquals(alternate, page))
-                        _ = RenderPage(alternate, settings, render);
-                }
             }
 
             using var target = await OpenTargetAsync(settings, cancellationToken).ConfigureAwait(false);
-            long total = (long)pages.Count * settings.Copies, done = 0;
+            var first = pages[0];
+            var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(first);
+            var total = (long)pages.Count * settings.Copies;
+            if (settings.ConnectionKind != "serial" && sectionsPerLabel > 1 &&
+                pages.All(page => page.AlternateNotch is not null &&
+                page.MediaWidthUm == first.MediaWidthUm && page.MediaHeightUm == first.MediaHeightUm))
+            {
+                // One format per strip avoids a printer stop and restart at each perforation.
+                var sectionsPerBlock = MaxPrintLengthUm / first.MediaHeightUm;
+                var totalSections = total * sectionsPerLabel;
+                for (long section = 0; section < totalSections;)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var count = (int)Math.Min(sectionsPerBlock, totalSections - section);
+                    var command = EncodeContinuousBlock(pages, settings, render, section, count, cancellationToken);
+                    await target.WritePageAsync(command, cancellationToken).ConfigureAwait(false);
+                    section += count;
+                    progress?.Report((section / sectionsPerLabel, total));
+                }
+                return;
+            }
+
+            long done = 0;
             for (var copy = 0; copy < settings.Copies; copy++)
-            foreach (var source in pages)
+            foreach (var page in pages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var page = LabelPrintPages.ForCopy(source, copy, pages.Count);
                 var raster = RenderPage(page, settings, render);
                 var command = EncodePage(page, settings, raster);
                 await target.WritePageAsync(command, cancellationToken).ConfigureAwait(false);
+                if (LabelPrintPages.PhysicalSectionsPerLabel(page) > 1)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var blank = GodexRaster.Blank(raster.Width, raster.Height);
+                    await target.WritePageAsync(EncodePage(page, settings, blank), cancellationToken).ConfigureAwait(false);
+                }
                 progress?.Report((++done, total));
             }
         }, cancellationToken);
+    }
+
+    internal static byte[] EncodeContinuousBlock(IReadOnlyList<LabelLayout> pages, PrintSettings settings,
+        Func<LabelLayout, PrintSettings, int, GodexRaster> render, long firstSection, int count,
+        CancellationToken cancellationToken)
+    {
+        var first = pages[0];
+        var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(first);
+        var length = first.MediaHeightUm * count;
+        var raster = GodexRaster.Blank(ToDots(first.MediaWidthUm), ToDots(length));
+        for (var section = 0; section < count; section++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var index = firstSection + section;
+            if (index % sectionsPerLabel != 0) continue;
+            var page = pages[(int)(index / sectionsPerLabel % pages.Count)];
+            var label = RenderPage(page, settings, render);
+            var start = ToDots(section * first.MediaHeightUm);
+            var end = ToDots((section + 1) * first.MediaHeightUm);
+            CopySection(label, raster, start, end);
+        }
+        return EncodeRaster(first.MediaWidthUm, length, settings, raster, inlinePattern: true);
+    }
+
+    private static int ToDots(long microns) => (int)Math.Round(microns * Dpi / 25_400d);
+
+    private static void CopySection(GodexRaster label, GodexRaster strip, int start, int end)
+    {
+        // Round the cumulative position so sub-dot differences cannot build up over the strip.
+        var rows = end - start;
+        for (var row = 0; row < rows; row++)
+        {
+            var source = (2 * row + 1) * label.Height / (2 * rows);
+            label.Bits.AsSpan(source * label.Stride, label.Stride)
+                .CopyTo(strip.Bits.AsSpan((start + row) * strip.Stride, strip.Stride));
+        }
     }
 
     private static GodexRaster RenderPage(LabelLayout page, PrintSettings settings, Func<LabelLayout, PrintSettings, int, GodexRaster> render)
@@ -154,7 +216,7 @@ public static class GodexPrintJob
 
     private static void ValidateMedia(LabelLayout page)
     {
-        if (page.MediaWidthUm is < 25_400 or > 118_000 || page.MediaHeightUm is < 4_000 or > 762_000)
+        if (page.MediaWidthUm is < 25_400 or > 118_000 || page.MediaHeightUm is < 4_000 or > MaxPrintLengthUm)
             throw new InvalidDataException(string.Format(L10n.T("Setup.MediaLimits"), 25.4, 118, 4, 762));
     }
 
@@ -166,8 +228,7 @@ public static class GodexPrintJob
 
     private static void ValidateRaster(LabelLayout page, GodexRaster raster)
     {
-        if (raster.Width != (int)Math.Round(page.MediaWidthUm * Dpi / 25_400d) ||
-            raster.Height != (int)Math.Round(page.MediaHeightUm * Dpi / 25_400d))
+        if (raster.Width != ToDots(page.MediaWidthUm) || raster.Height != ToDots(page.MediaHeightUm))
             throw new InvalidDataException(L10n.T("Godex.RasterSize"));
 
         // The G530 may feed wider material than it can address. Discard blank columns only.
@@ -183,8 +244,13 @@ public static class GodexPrintJob
         ValidateParameters(settings);
         ValidateMediaGap(page, settings);
         ValidateRaster(page, raster);
-        var width = Math.Min(Units.UmToMm(page.MediaWidthUm), HeadWidthMm);
-        var length = Units.UmToMm(page.MediaHeightUm);
+        return EncodeRaster(page.MediaWidthUm, page.MediaHeightUm, settings, raster, inlinePattern: false);
+    }
+
+    private static byte[] EncodeRaster(long widthUm, long lengthUm, PrintSettings settings, GodexRaster raster, bool inlinePattern)
+    {
+        var width = Math.Min(Units.UmToMm(widthUm), HeadWidthMm);
+        var length = Units.UmToMm(lengthUm);
         var media = settings.MediaGapMm == 0
             ? FormattableString.Invariant($"^Q{length:0.###},0,0\r\n")
             : FormattableString.Invariant($"^Q{length:0.###},{settings.MediaGapMm:0.###}\r\n");
@@ -194,10 +260,28 @@ public static class GodexPrintJob
             setup.Append(FormattableString.Invariant($"^H{darkness:00}\r\n"));
         if (settings.CutOffsetMm is double stop)
             setup.Append(FormattableString.Invariant($"^E{stop:0}\r\n"));
-        setup.Append("~G\r\n");
 
-        var header = Encoding.ASCII.GetBytes(setup.ToString());
         var bytesPerRow = Math.Min(raster.Stride, HeadDots / 8);
+        if (inlinePattern)
+        {
+            // Inline Q uses even-byte rows and CR directly before the binary bitmap.
+            // This matches EZio64.dll putimage and the EZPL manual's Pattern command.
+            var paddedStride = (bytesPerRow + 1) & ~1;
+            setup.Append(FormattableString.Invariant($"^L\r\nQ0,0,{paddedStride},{raster.Height}\r"));
+            var patternHeader = Encoding.ASCII.GetBytes(setup.ToString());
+            using var pattern = new MemoryStream(patternHeader.Length + paddedStride * raster.Height + 3);
+            pattern.Write(patternHeader);
+            for (var y = 0; y < raster.Height; y++)
+            {
+                pattern.Write(raster.Bits, y * raster.Stride, bytesPerRow);
+                if (paddedStride != bytesPerRow) pattern.WriteByte(0);
+            }
+            pattern.Write("E\r\n"u8);
+            return pattern.ToArray();
+        }
+
+        setup.Append("~G\r\n");
+        var header = Encoding.ASCII.GetBytes(setup.ToString());
         using var buffer = new MemoryStream(header.Length + raster.Height * (bytesPerRow + 2) + 3);
         buffer.Write(header);
         for (var y = 0; y < raster.Height; y++)

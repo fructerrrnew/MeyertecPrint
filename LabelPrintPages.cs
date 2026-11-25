@@ -88,15 +88,17 @@ public static class LabelPrintPages
         };
     }
 
-    public static IReadOnlyList<LabelLayout> CreateStockPreview(LabelLayout layout) =>
-        Create(layout, CreateStockSampleRecords(layout), true);
+    internal static int PhysicalSectionsPerLabel(LabelLayout layout) => layout.AlternateNotch is null ? 1 : 2;
 
-    internal static LabelLayout ForCopy(LabelLayout page, long copyIndex, int pagesPerCopy)
+    public static IReadOnlyList<LabelLayout> CreateStockPreview(LabelLayout layout)
     {
-        if (page.AlternateNotch is null || copyIndex % 2 == 0 || pagesPerCopy % 2 == 0) return page;
-        var copy = page.Clone();
-        copy.IsNotchedSection = !page.IsNotchedSection;
-        return copy;
+        var full = layout.Clone();
+        full.IsNotchedSection = false;
+        if (full.AlternateNotch is null) return [full];
+
+        var skipped = full.Clone();
+        skipped.IsNotchedSection = true;
+        return [full, skipped, full.Clone()];
     }
 
     // Clone only the requested page, so large batches do not allocate one layout per record.
@@ -117,7 +119,7 @@ public static class LabelPrintPages
             {
                 if (index < 0 || index >= Count) throw new ArgumentOutOfRangeException(nameof(index));
                 var page = _template.Clone();
-                page.IsNotchedSection = index % 2 != 0;
+                page.IsNotchedSection = false;
                 if (index > 0) ApplyFields(page, _records[index - 1]);
                 return page;
             }

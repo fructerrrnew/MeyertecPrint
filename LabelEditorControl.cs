@@ -397,11 +397,20 @@ public partial class LabelEditorControl : UserControl
     public void ApplyPrintSettings(PrintSettings settings, long mediaWidthUm, long mediaHeightUm)
     {
         CommitInline();
-        if (_layout.MediaWidthUm != mediaWidthUm || _layout.MediaHeightUm != mediaHeightUm)
+        if (_layout.AlternateNotch is not null)
+        {
+            if (_layout.MediaHeightUm != mediaHeightUm)
+            {
+                var previous = _layout.Clone();
+                GeometryOperations.ResizeNotchedStockPitch(_layout, mediaHeightUm);
+                _undo.Push(previous);
+            }
+        }
+        else if (_layout.MediaWidthUm != mediaWidthUm || _layout.MediaHeightUm != mediaHeightUm)
         {
             _undo.Push(_layout.Clone());
             var g = _layout.Geometry;
-            if (_layout.AlternateNotch is null && _layout.Rows.Count == 1 && _layout.Rows[0].Cells.Count == 1 && g.LabelsInRow == 1 &&
+            if (_layout.Rows.Count == 1 && _layout.Rows[0].Cells.Count == 1 && g.LabelsInRow == 1 &&
                 g.WidthUm == _layout.MediaWidthUm && g.HeightUm == _layout.MediaHeightUm &&
                 _layout.Rows[0].HeightUm == g.HeightUm && _layout.Rows[0].Cells[0].WidthUm == g.WidthUm &&
                 g.LeftUm == 0 && g.RightUm == 0 && g.TopUm == 0 && g.GapBetweenUm == 0 && g.GapBottomUm == 0)
@@ -410,9 +419,9 @@ public partial class LabelEditorControl : UserControl
                 _layout.Rows[0].HeightUm = mediaHeightUm;
                 _layout.Rows[0].Cells[0].WidthUm = mediaWidthUm;
             }
+            _layout.MediaWidthUm = mediaWidthUm;
+            _layout.MediaHeightUm = mediaHeightUm;
         }
-        _layout.MediaWidthUm = mediaWidthUm;
-        _layout.MediaHeightUm = mediaHeightUm;
         UpdateGeometryBoxes();
         _displayPrintSettings = settings;
         SelectCell(null, null);

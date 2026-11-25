@@ -80,6 +80,8 @@ public sealed class PreviewDialog : BrandForm
             previous.Enabled = index > 1;
             next.Enabled = index < pages.Count;
             details.Text = $"{Units.UmToMm(layout.MediaWidthUm):0.###} × {Units.UmToMm(layout.MediaHeightUm):0.###} {L10n.T("Unit.Mm")}  ·  {dpiX:0} × {dpiY:0} DPI";
+            if (layout.AlternateNotch is not null)
+                details.Text += Environment.NewLine + L10n.T("Ribbon.SkipNotchedSections");
             preview.AccessibleDescription = details.Text;
             preview.SetPage(layout, settings, dpiX, dpiY);
         }

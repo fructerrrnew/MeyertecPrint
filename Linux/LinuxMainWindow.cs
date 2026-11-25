@@ -203,9 +203,10 @@ internal sealed partial class LinuxMainWindow : Window
         if (_selected >= _elements.Count) _selected = -1;
         Title = _project.Name + (_dirty ? " *" : "") + " — " + Brand;
         var gap = Units.MmToUm((double)Math.Clamp(_project.Print.MediaGapMm, 0, 100));
-        var length = LabelSequence.CalculateLengthUm(Layout.MediaHeightUm, pages.Count, gap);
+        var length = LabelSequence.CalculateFeedLengthUm(Layout, pages.Count, gap);
+        var stockNote = Layout.AlternateNotch is null ? "" : L10n.T("Ribbon.SkipNotchedSections") + "   ·   ";
         _status.Text = $"{Tr("Этикеток", "Labels")} {pages.Count}   ·   {Tr("Длина ленты", "Run length")} {Units.FormatMm(length)}   ·   " +
-            (_dirty ? Tr("Есть несохранённые изменения", "Unsaved changes") : Tr("Сохранено", "Saved"));
+            stockNote + (_dirty ? Tr("Есть несохранённые изменения", "Unsaved changes") : Tr("Сохранено", "Saved"));
 
         // The canvas stays alive across edits. Move it out of its previous layout first.
         if (_canvas.Parent is Panel old) old.Children.Remove(_canvas);
@@ -301,8 +302,7 @@ internal sealed partial class LinuxMainWindow : Window
         {
             Text = Tr("Макет и элементы", "Layout and elements"), FontSize = 18, FontWeight = FontWeight.SemiBold
         });
-        content.Children.Add(Action(Tr("Размеры носителя…", "Media size…"), EditMedia,
-            enabled: Layout.AlternateNotch is null));
+        content.Children.Add(Action(Tr("Размеры носителя…", "Media size…"), EditMedia));
         if (_record > 0)
         {
             content.Children.Add(new TextBlock { Text = Tr("Положение и формат полей задаются на первой этикетке.", "Set field positions and styles on the first label."), TextWrapping = TextWrapping.Wrap });
@@ -517,20 +517,33 @@ internal sealed partial class LinuxMainWindow : Window
 
     private async Task EditMedia()
     {
-        var form = new StackPanel { Spacing = 8 };
-        var w = Number(Mm(Layout.MediaWidthUm), 1, 300);
-        var h = Number(Mm(Layout.MediaHeightUm), 1, 762);
-        Field(form, Tr("Ширина носителя, мм", "Media width, mm"), w);
-        Field(form, Tr("Длина страницы, мм", "Page length, mm"), h);
-        if (!await ConfirmForm(Tr("Носитель", "Media"), form, Tr("Применить", "Apply"))) return;
-        var candidate = Layout.Clone();
-        candidate.MediaWidthUm = ToUm(w);
-        candidate.MediaHeightUm = ToUm(h);
         var old = Layout;
-        if (candidate.Rows is [var row] && row.Cells is [var cell] && row.HeightUm == old.MediaHeightUm && cell.WidthUm == old.MediaWidthUm)
+        var notched = old.AlternateNotch is not null;
+        var form = new StackPanel { Spacing = 8 };
+        var w = Number(Mm(old.MediaWidthUm), 1, 300);
+        var h = Number(Mm(old.MediaHeightUm), notched ? 4 : 1, 762);
+        w.IsEnabled = !notched;
+        Field(form, Tr("Ширина носителя, мм", "Media width, mm"), w);
+        Field(form, notched ? L10n.T("Setup.FeedPitch") : Tr("Длина страницы, мм", "Page length, mm"), h);
+        if (notched)
+            form.Children.Add(new TextBlock
+            {
+                Text = L10n.T("Setup.FixedNotchedStock"), TextWrapping = TextWrapping.Wrap
+            });
+        if (!await ConfirmForm(Tr("Носитель", "Media"), form, Tr("Применить", "Apply"))) return;
+        var candidate = old.Clone();
+        if (notched)
+            GeometryOperations.ResizeNotchedStockPitch(candidate, ToUm(h));
+        else
         {
-            candidate.Geometry.WidthUm = cell.WidthUm = candidate.MediaWidthUm;
-            candidate.Geometry.HeightUm = row.HeightUm = candidate.MediaHeightUm;
+            candidate.MediaWidthUm = ToUm(w);
+            candidate.MediaHeightUm = ToUm(h);
+            if (candidate.Rows is [var row] && row.Cells is [var cell] &&
+                row.HeightUm == old.MediaHeightUm && cell.WidthUm == old.MediaWidthUm)
+            {
+                candidate.Geometry.WidthUm = cell.WidthUm = candidate.MediaWidthUm;
+                candidate.Geometry.HeightUm = row.HeightUm = candidate.MediaHeightUm;
+            }
         }
         using var raster = LabelRaster.Render(candidate, _project!.Print, 96);
         _history.Push(old.Clone());

@@ -336,12 +336,25 @@ public static class SelfTest
         using (var printed = LabelPrintRenderer.Render(stockPages[1], terminal.Print, 300, 300))
         using (var preview = LabelPrintRenderer.Render(stockPages[1], terminal.Print, 300, 300, showMedia: true))
         {
-            Check("print: вырез убирает краску только на второй секции",
+            Check("print: вся секция с вырезом остаётся без краски",
                 plain.Width == 591 && plain.Height == 118 && plain.GetPixel(584, 59).R < 128 &&
-                printed.GetPixel(584, 59).R == 255 && printed.GetPixel(584, 28).R < 128 &&
-                printed.GetPixel(534, 35).R < 128 && printed.GetPixel(530, 59).R < 128);
+                printed.GetPixel(584, 59).R == 255 && printed.GetPixel(584, 28).R == 255 &&
+                printed.GetPixel(534, 35).R == 255 && printed.GetPixel(530, 59).R == 255);
             Check("preview: вырез виден на правом крае", preview.GetPixel(584, 59).R < 250);
         }
+        var terminalPrintPages = LabelPrintPages.Create(terminal.Layout, [new LabelItem { Fields = new() { ["C0"] = "X2" } }], true);
+        var strip = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, new PrintSettings { Copies = 2, Temperature = 19 },
+            (page, _, _) => GodexRaster.Create(591, 118, (x, y) => y == 0 && x == page.Objects[0].Content.Text[^1] - '1'),
+            0, 8, CancellationToken.None);
+        var stripHeader = "^Q80,0,0\r\n^W50\r\n^P1\r\n^C1\r\n^R0\r\n^H19\r\n^L\r\nQ0,0,74,945\r"u8;
+        bool BlankRows(int from, int to) => strip.AsSpan(
+            strip.Length - 945 * 74 - 3 + from * 74, (to - from) * 74).IndexOfAnyExcept((byte)0) < 0;
+        Check("print: один растр пропускает каждый вырез и сохраняет записи между копиями",
+            strip.AsSpan().StartsWith(stripHeader) && strip.AsSpan().EndsWith("E\r\n"u8) &&
+            strip.Length == stripHeader.Length + 74 * 945 + 3 &&
+            strip[stripHeader.Length] == 0x80 && strip[stripHeader.Length + 236 * 74] == 0x40 &&
+            strip[stripHeader.Length + 472 * 74] == 0x80 && strip[stripHeader.Length + 709 * 74] == 0x40 &&
+            BlankRows(118, 236) && BlankRows(354, 472) && BlankRows(591, 709) && BlankRows(827, 945));
         try
         {
             WstxIo.Write("raster formatting", fittedLayout, wstxPath);

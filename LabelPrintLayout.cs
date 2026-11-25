@@ -124,6 +124,15 @@ internal sealed class LabelRasterPlan
         if (width < 1 || height < 1 || (long)width * height > 80_000_000)
             throw new InvalidDataException(L10n.T("Print.RasterTooLarge"));
 
+        if (layout.ActiveNotch is { } notch)
+        {
+            // Skipped stock still has a visible outline in previews and carries no artwork.
+            var top = notch.CenterYUm - notch.HeightUm / 2;
+            var cutout = System.Drawing.Rectangle.FromLTRB(Dot(layout.MediaWidthUm - notch.DepthUm, dpiX),
+                Dot(top, dpiY), width, Dot(top + notch.HeightUm, dpiY));
+            return new LabelRasterPlan(width, height, [], cutout);
+        }
+
         // Round both boundaries so adjacent cells still meet on the same printer dot.
         System.Drawing.Rectangle Rectangle(long x, long y, long w, long h)
         {
@@ -151,15 +160,7 @@ internal sealed class LabelRasterPlan
                 throw new InvalidDataException(L10n.T("Print.DoesNotFit"));
             elements.Add((item.Content, Rectangle(item.XUm, item.YUm, item.WidthUm, item.HeightUm)));
         }
-        System.Drawing.Rectangle? cutout = null;
-        if (layout.ActiveNotch is { } notch)
-        {
-            // The recess belongs to the stock. Printer X/Y adjustments move the artwork only.
-            var top = notch.CenterYUm - notch.HeightUm / 2;
-            cutout = System.Drawing.Rectangle.FromLTRB(Dot(layout.MediaWidthUm - notch.DepthUm, dpiX),
-                Dot(top, dpiY), width, Dot(top + notch.HeightUm, dpiY));
-        }
-        return new LabelRasterPlan(width, height, elements, cutout);
+        return new LabelRasterPlan(width, height, elements, null);
     }
 
     private static int Dot(double positionUm, float dpi) => checked((int)Math.Round(positionUm * dpi / 25_400d));

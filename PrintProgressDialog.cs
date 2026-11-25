@@ -127,7 +127,20 @@ public sealed class PrintProgressDialog : BrandForm
         using var document = new PrintDocument { OriginAtMargins = false, PrintController = new StandardPrintController() };
         document.PrinterSettings.PrinterName = _settings.PrinterName ?? string.Empty;
         if (!document.PrinterSettings.IsValid) throw new InvalidPrinterException(document.PrinterSettings);
-        MainForm.SetLabelPaper(document, _pages[_start]);
+
+        var paper = _pages[_start];
+        var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(paper);
+        if (sectionsPerLabel > 1)
+        {
+            // Put the artwork and the unprinted pitch on one driver page, so the blank pitch cannot be skipped.
+            var combinedHeight = checked(paper.MediaHeightUm * sectionsPerLabel);
+            var maximumLength = _plugin?.MaxPrintLengthMm ?? 762;
+            if (Units.UmToMm(combinedHeight) > maximumLength)
+                throw new InvalidDataException(string.Format(L10n.T("Print.DriverStockPitchTooLong"), maximumLength / sectionsPerLabel));
+            paper = paper.Clone();
+            paper.MediaHeightUm = combinedHeight;
+        }
+        MainForm.SetLabelPaper(document, paper);
         document.PrinterSettings.Copies = 1;
         var resolution = document.DefaultPageSettings.PrinterResolution;
         var dpiX = resolution.X >= 72 ? resolution.X : _plugin?.ResolutionDpi ?? 300;
@@ -141,14 +154,6 @@ public sealed class PrintProgressDialog : BrandForm
                 GodexPrintJob.ValidateMediaGap(page, _settings);
                 if (_plugin is not null) LabelPrintLayout.EnsurePrintWidth(page, _plugin.MaxPrintWidthMm);
                 using var bitmap = LabelPrintRenderer.Render(page, _settings, dpiX, dpiY, validateForPrint: true);
-                if (_settings.Copies > 1)
-                {
-                    var alternate = LabelPrintPages.ForCopy(page, 1, _count);
-                    if (!ReferenceEquals(alternate, page))
-                    {
-                        using var alternateBitmap = LabelPrintRenderer.Render(alternate, _settings, dpiX, dpiY, validateForPrint: true);
-                    }
-                }
             }
             catch (InvalidDataException ex)
             { throw new InvalidDataException(string.Format(L10n.T("Print.PageError"), _start + i + 1, ex.Message), ex); }
@@ -160,8 +165,9 @@ public sealed class PrintProgressDialog : BrandForm
         {
             if (token.IsCancellationRequested) { e.Cancel = true; e.HasMorePages = false; return; }
             var graphics = e.Graphics ?? throw new InvalidDataException(L10n.T("Print.InvalidGraphics"));
-            var page = LabelPrintPages.ForCopy(_pages[_start + (int)(index % _count)], index / _count, _count);
+            var page = _pages[_start + (int)(index % _count)];
             using var bitmap = LabelPrintRenderer.Render(page, _settings, graphics.DpiX, graphics.DpiY, validateForPrint: true);
+            if (sectionsPerLabel > 1) graphics.Clear(Color.White);
             LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY);
             index++;
             Report("Print.SpoolProgress", index, total);
