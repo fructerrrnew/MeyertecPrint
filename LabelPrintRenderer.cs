@@ -51,7 +51,7 @@ public static class LabelPrintRenderer
     }
 
     /// <summary>Рисует готовую этикетку в точках устройства с учётом аппаратного поля.</summary>
-    public static void DrawToDevice(Graphics graphics, Bitmap bitmap, float hardMarginX, float hardMarginY)
+    public static void DrawToDevice(Graphics graphics, Bitmap bitmap, float hardMarginX, float hardMarginY, long feedOffsetUm = 0)
     {
         var state = graphics.Save();
         try
@@ -61,7 +61,7 @@ public static class LabelPrintRenderer
             graphics.PixelOffsetMode = PixelOffsetMode.Half;
             // HardMargin задаётся в сотых долях дюйма.
             var x = (float)-Math.Round(hardMarginX * graphics.DpiX / 100f);
-            var y = (float)-Math.Round(hardMarginY * graphics.DpiY / 100f);
+            var y = (float)(Math.Round(feedOffsetUm * (double)graphics.DpiY / 25_400d) - Math.Round(hardMarginY * graphics.DpiY / 100f));
             var destination = new RectangleF(x, y, bitmap.Width, bitmap.Height);
             graphics.DrawImage(bitmap, destination, new RectangleF(0, 0, bitmap.Width, bitmap.Height), GraphicsUnit.Pixel);
         }

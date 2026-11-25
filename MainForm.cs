@@ -702,9 +702,9 @@ public partial class MainForm : BrandForm
         return _printDocument;
     }
 
-    internal static void SetLabelPaper(PrintDocument document, LabelLayout layout)
+    internal static void SetLabelPaper(PrintDocument document, LabelLayout layout, PageSettings? page = null)
     {
-        var page = document.DefaultPageSettings;
+        page ??= document.DefaultPageSettings;
         page.PrinterSettings = document.PrinterSettings;
         var width = checked((int)Math.Round(layout.MediaWidthUm / 254d));
         var height = checked((int)Math.Round(layout.MediaHeightUm / 254d));
@@ -750,7 +750,8 @@ public partial class MainForm : BrandForm
 
             var pages = LabelPrintPages.Create(_editor.Layout, _project.Ribbon.Labels, dialog.IncludeImported);
             var plugin = PrinterPlugins.All.FirstOrDefault(x => x.Name == _project.PrinterModel);
-            using var progress = new PrintProgressDialog(pages, dialog.RangeFrom, dialog.RangeTo, _project.Print, plugin);
+            using var progress = new PrintProgressDialog(pages, dialog.RangeFrom, dialog.RangeTo, _project.Print, plugin,
+                startOnNotchedSection: dialog.StartOnNotchedSection);
             var result = progress.ShowDialog(this);
             if (progress.Error is not null) throw progress.Error;
             if (progress.WasCancelled)

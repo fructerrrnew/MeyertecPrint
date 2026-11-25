@@ -500,9 +500,21 @@ internal sealed partial class LinuxMainWindow
         form.Children.Add(usbFields);
         form.Children.Add(serialFields);
         form.Children.Add(hostFields);
+        var patterned = Layout.AlternateNotch is not null;
+        ComboBox? initialSection = null;
+        if (patterned)
+        {
+            var section = Choice([L10n.T("Print.SectionFull"), L10n.T("Print.SectionNotched")]);
+            initialSection = section;
+            var hint = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            void RefreshStart() => hint.Text = L10n.T(section.SelectedIndex == 1 ? "Print.StartNotchedHint" : "Print.StartPlain");
+            section.SelectionChanged += (_, _) => RefreshStart();
+            RefreshStart();
+            Field(form, L10n.T("Print.StartSection"), section);
+            form.Children.Add(hint);
+        }
         var offsetX = Number((decimal)previous.OffsetXMm, -50, 50);
         var offsetY = Number((decimal)previous.OffsetYMm, -50, 50);
-        var patterned = Layout.AlternateNotch is not null;
         var gap = Number(patterned ? 0 : previous.MediaGapMm, 0, 100);
         gap.IsEnabled = !patterned;
         var heat = Number(previous.Temperature, 0, 19, 1);
@@ -512,13 +524,13 @@ internal sealed partial class LinuxMainWindow
         var copies = Number(previous.Copies, 1, 500, 1);
         Field(form, Tr("Смещение X, мм", "X offset, mm"), offsetX);
         Field(form, Tr("Смещение Y, мм", "Y offset, mm"), offsetY);
+        if (patterned)
+            form.Children.Add(new TextBlock { Text = L10n.T("Setup.OffsetCalibration"), TextWrapping = TextWrapping.Wrap });
         Field(form, Tr("Зазор носителя, мм", "Media gap, mm"), gap);
         Field(form, Tr("Нагрев (0–19)", "Darkness (0–19)"), heat);
         Field(form, Tr("Отступ остановки / отреза, мм", "Stop / cut offset, mm"), cut);
         Field(form, Tr("Печатать с этикетки", "Print from label"), start);
         Field(form, Tr("Печатать по этикетку", "Print through label"), end);
-        if (patterned)
-            form.Children.Add(new TextBlock { Text = L10n.T("Print.StartPlain"), TextWrapping = TextWrapping.Wrap });
         Field(form, Tr("Количество копий", "Copies"), copies);
         var send = new CheckBox { Content = Tr("Отправить задание после сохранения настроек", "Send job after saving settings") };
         form.Children.Add(send);
@@ -539,6 +551,7 @@ internal sealed partial class LinuxMainWindow
         project.PrinterModel = "G530";
         Changed();
         if (send.IsChecked != true) return;
+        var startOnNotchedSection = initialSection?.SelectedIndex == 1;
         var pages = Pages.Skip(first - 1).Take(last - first + 1).ToList();
 
         using var cancellation = new CancellationTokenSource();
@@ -570,7 +583,7 @@ internal sealed partial class LinuxMainWindow
                         var pixel = bitmap.GetPixel(x, y);
                         return pixel.Alpha >= 128 && (pixel.Red * 299 + pixel.Green * 587 + pixel.Blue * 114) < 128_000;
                     });
-                }, progress, cancellation.Token));
+                }, progress, cancellation.Token, startOnNotchedSection: startOnNotchedSection));
             }
             catch (Exception ex) { failure = ex; }
             finally { closed = true; progressWindow.Close(); }

@@ -90,6 +90,9 @@ public static class LabelPrintPages
 
     internal static int PhysicalSectionsPerLabel(LabelLayout layout) => layout.AlternateNotch is null ? 1 : 2;
 
+    internal static int LeadingBlankSections(LabelLayout layout, bool startOnNotchedSection) =>
+        startOnNotchedSection && layout.AlternateNotch is not null ? 1 : 0;
+
     public static IReadOnlyList<LabelLayout> CreateStockPreview(LabelLayout layout)
     {
         var full = layout.Clone();

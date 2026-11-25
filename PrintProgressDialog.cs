@@ -11,6 +11,7 @@ public sealed class PrintProgressDialog : BrandForm
     private readonly int _start, _count;
     private readonly PrintSettings _settings;
     private readonly PrinterPlugin? _plugin;
+    private readonly bool _startOnNotchedSection;
     private readonly CancellationTokenSource _cancel = new();
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Top, Height = 24, Maximum = 1000 };
     private readonly Label _status = new() { Dock = DockStyle.Top, Height = 70, Padding = new Padding(15), AutoEllipsis = true };
@@ -19,10 +20,12 @@ public sealed class PrintProgressDialog : BrandForm
     public Exception? Error { get; private set; }
     public bool WasCancelled { get; private set; }
 
-    public PrintProgressDialog(IReadOnlyList<LabelLayout> pages, int from, int to, PrintSettings settings, PrinterPlugin? plugin)
+    public PrintProgressDialog(IReadOnlyList<LabelLayout> pages, int from, int to, PrintSettings settings,
+        PrinterPlugin? plugin, bool startOnNotchedSection = false)
     {
         SuspendLayout();
         _pages = pages; _start = from - 1; _count = to - from + 1; _settings = settings; _plugin = plugin;
+        _startOnNotchedSection = startOnNotchedSection;
         Text = L10n.T("Print.ProgressTitle"); StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog; MinimizeBox = MaximizeBox = false;
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
@@ -95,7 +98,8 @@ public sealed class PrintProgressDialog : BrandForm
     {
         var selected = _pages.Skip(_start).Take(_count).ToArray();
         var progress = new Progress<(long Done, long Total)>(page => Report("Print.SpoolProgress", page.Done, page.Total));
-        GodexPrintJob.SendAsync(_settings, selected, RenderMonochrome, progress, token).GetAwaiter().GetResult();
+        GodexPrintJob.SendAsync(_settings, selected, RenderMonochrome, progress, token,
+            startOnNotchedSection: _startOnNotchedSection).GetAwaiter().GetResult();
     }
 
     private static GodexRaster RenderMonochrome(LabelLayout layout, PrintSettings settings, int dpi)
@@ -130,13 +134,16 @@ public sealed class PrintProgressDialog : BrandForm
 
         var paper = _pages[_start];
         var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(paper);
+        var leadingSections = LabelPrintPages.LeadingBlankSections(paper, _startOnNotchedSection);
+        var leadingBlankUm = checked(paper.MediaHeightUm * leadingSections);
         if (sectionsPerLabel > 1)
         {
-            // Put the artwork and the unprinted pitch on one driver page, so the blank pitch cannot be skipped.
+            // Include the blank pitches in a driver page with artwork to prevent blank-page suppression.
             var combinedHeight = checked(paper.MediaHeightUm * sectionsPerLabel);
             var maximumLength = _plugin?.MaxPrintLengthMm ?? 762;
-            if (Units.UmToMm(combinedHeight) > maximumLength)
-                throw new InvalidDataException(string.Format(L10n.T("Print.DriverStockPitchTooLong"), maximumLength / sectionsPerLabel));
+            if (Units.UmToMm(checked(combinedHeight + leadingBlankUm)) > maximumLength)
+                throw new InvalidDataException(string.Format(L10n.T("Print.DriverStockPitchTooLong"),
+                    maximumLength / (sectionsPerLabel + leadingSections)));
             paper = paper.Clone();
             paper.MediaHeightUm = combinedHeight;
         }
@@ -161,6 +168,14 @@ public sealed class PrintProgressDialog : BrandForm
         }
         token.ThrowIfCancellationRequested();
         long index = 0, total = (long)_count * _settings.Copies;
+        if (leadingSections > 0)
+        {
+            var firstPageSettings = (PageSettings)document.DefaultPageSettings.Clone();
+            paper.MediaHeightUm = checked(paper.MediaHeightUm + leadingBlankUm);
+            MainForm.SetLabelPaper(document, paper, firstPageSettings);
+            document.QueryPageSettings += (_, e) =>
+                e.PageSettings = index == 0 ? firstPageSettings : document.DefaultPageSettings;
+        }
         document.PrintPage += (_, e) =>
         {
             if (token.IsCancellationRequested) { e.Cancel = true; e.HasMorePages = false; return; }
@@ -168,7 +183,8 @@ public sealed class PrintProgressDialog : BrandForm
             var page = _pages[_start + (int)(index % _count)];
             using var bitmap = LabelPrintRenderer.Render(page, _settings, graphics.DpiX, graphics.DpiY, validateForPrint: true);
             if (sectionsPerLabel > 1) graphics.Clear(Color.White);
-            LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY);
+            var feedOffsetUm = index == 0 ? leadingBlankUm : 0;
+            LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY, feedOffsetUm);
             index++;
             Report("Print.SpoolProgress", index, total);
             e.HasMorePages = index < total;

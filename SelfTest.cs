@@ -343,9 +343,11 @@ public static class SelfTest
             Check("preview: вырез виден на правом крае", preview.GetPixel(584, 59).R < 250);
         }
         var terminalPrintPages = LabelPrintPages.Create(terminal.Layout, [new LabelItem { Fields = new() { ["C0"] = "X2" } }], true);
-        var strip = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, new PrintSettings { Copies = 2, Temperature = 19 },
-            (page, _, _) => GodexRaster.Create(591, 118, (x, y) => y == 0 && x == page.Objects[0].Content.Text[^1] - '1'),
-            0, 8, CancellationToken.None);
+        var stripPrint = new PrintSettings { Copies = 2, Temperature = 19 };
+        static GodexRaster RenderStripSample(LabelLayout page, PrintSettings settings, int dpi) =>
+            GodexRaster.Create(591, 118, (x, y) => y == 0 && x == page.Objects[0].Content.Text[^1] - '1');
+        var strip = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, stripPrint, RenderStripSample, 0, 8,
+            CancellationToken.None);
         var stripHeader = "^Q80,0,0\r\n^W50\r\n^P1\r\n^C1\r\n^R0\r\n^H19\r\n^L\r\nQ0,0,74,945\r"u8;
         bool BlankRows(int from, int to) => strip.AsSpan(
             strip.Length - 945 * 74 - 3 + from * 74, (to - from) * 74).IndexOfAnyExcept((byte)0) < 0;
@@ -355,6 +357,16 @@ public static class SelfTest
             strip[stripHeader.Length] == 0x80 && strip[stripHeader.Length + 236 * 74] == 0x40 &&
             strip[stripHeader.Length + 472 * 74] == 0x80 && strip[stripHeader.Length + 709 * 74] == 0x40 &&
             BlankRows(118, 236) && BlankRows(354, 472) && BlankRows(591, 709) && BlankRows(827, 945));
+        var notchFirst = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, stripPrint, RenderStripSample, 0, 9,
+            CancellationToken.None, startOnNotchedSection: true);
+        var notchFirstHeader = "^Q90,0,0\r\n^W50\r\n^P1\r\n^C1\r\n^R0\r\n^H19\r\n^L\r\nQ0,0,74,1063\r"u8;
+        var notchFirstBody = notchFirst.AsSpan(notchFirstHeader.Length);
+        Check("print: старт с выреза добавляет пустую секцию один раз на задание",
+            notchFirst.AsSpan().StartsWith(notchFirstHeader) && notchFirstBody.Length == 74 * 1063 + 3 &&
+            notchFirstBody[..(118 * 74)].IndexOfAnyExcept((byte)0) < 0 &&
+            notchFirstBody[118 * 74] == 0x80 && notchFirstBody[354 * 74] == 0x40 &&
+            notchFirstBody[591 * 74] == 0x80 && notchFirstBody[827 * 74] == 0x40 &&
+            notchFirstBody.Slice(945 * 74, (1063 - 945) * 74).IndexOfAnyExcept((byte)0) < 0);
         try
         {
             WstxIo.Write("raster formatting", fittedLayout, wstxPath);

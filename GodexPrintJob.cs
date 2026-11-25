@@ -55,7 +55,8 @@ public static class GodexPrintJob
 
     public static Task SendAsync(PrintSettings settings, IReadOnlyList<LabelLayout> pages,
         Func<LabelLayout, PrintSettings, int, GodexRaster> render,
-        IProgress<(long Done, long Total)>? progress = null, CancellationToken cancellationToken = default)
+        IProgress<(long Done, long Total)>? progress = null, CancellationToken cancellationToken = default,
+        bool startOnNotchedSection = false)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(pages);
@@ -79,6 +80,7 @@ public static class GodexPrintJob
             using var target = await OpenTargetAsync(settings, cancellationToken).ConfigureAwait(false);
             var first = pages[0];
             var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(first);
+            var leadingSections = LabelPrintPages.LeadingBlankSections(first, startOnNotchedSection);
             var total = (long)pages.Count * settings.Copies;
             if (settings.ConnectionKind != "serial" && sectionsPerLabel > 1 &&
                 pages.All(page => page.AlternateNotch is not null &&
@@ -86,17 +88,24 @@ public static class GodexPrintJob
             {
                 // One format per strip avoids a printer stop and restart at each perforation.
                 var sectionsPerBlock = MaxPrintLengthUm / first.MediaHeightUm;
-                var totalSections = total * sectionsPerLabel;
+                var totalSections = leadingSections + total * sectionsPerLabel;
                 for (long section = 0; section < totalSections;)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var count = (int)Math.Min(sectionsPerBlock, totalSections - section);
-                    var command = EncodeContinuousBlock(pages, settings, render, section, count, cancellationToken);
+                    var command = EncodeContinuousBlock(pages, settings, render, section, count, cancellationToken,
+                        startOnNotchedSection);
                     await target.WritePageAsync(command, cancellationToken).ConfigureAwait(false);
                     section += count;
-                    progress?.Report((section / sectionsPerLabel, total));
+                    progress?.Report((Math.Max(0, section - leadingSections) / sectionsPerLabel, total));
                 }
                 return;
+            }
+
+            if (leadingSections > 0)
+            {
+                var blank = GodexRaster.Blank(ToDots(first.MediaWidthUm), ToDots(first.MediaHeightUm));
+                await target.WritePageAsync(EncodePage(first, settings, blank), cancellationToken).ConfigureAwait(false);
             }
 
             long done = 0;
@@ -120,17 +129,18 @@ public static class GodexPrintJob
 
     internal static byte[] EncodeContinuousBlock(IReadOnlyList<LabelLayout> pages, PrintSettings settings,
         Func<LabelLayout, PrintSettings, int, GodexRaster> render, long firstSection, int count,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool startOnNotchedSection = false)
     {
         var first = pages[0];
         var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(first);
+        var leadingSections = LabelPrintPages.LeadingBlankSections(first, startOnNotchedSection);
         var length = first.MediaHeightUm * count;
         var raster = GodexRaster.Blank(ToDots(first.MediaWidthUm), ToDots(length));
         for (var section = 0; section < count; section++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var index = firstSection + section;
-            if (index % sectionsPerLabel != 0) continue;
+            var index = firstSection + section - leadingSections;
+            if (index < 0 || index % sectionsPerLabel != 0) continue;
             var page = pages[(int)(index / sectionsPerLabel % pages.Count)];
             var label = RenderPage(page, settings, render);
             var start = ToDots(section * first.MediaHeightUm);

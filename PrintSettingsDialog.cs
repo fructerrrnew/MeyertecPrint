@@ -40,6 +40,7 @@ public sealed class PrintSettingsDialog : BrandForm
     private readonly Control _queueField, _portField, _usbField, _serialField, _baudField, _gapField;
     private readonly Control _heatField, _stopField;
     private readonly TableLayoutPanel _range;
+    private readonly ComboBox? _startSection;
     private readonly NumericUpDown _width = Number(1, 300, 60), _height = Number(1, 762, 30);
     private readonly NumericUpDown _offsetX = Number(-50, 50, 0), _offsetY = Number(-50, 50, 0);
     private readonly NumericUpDown _copies = Number(1, 500, 1, 0);
@@ -68,6 +69,7 @@ public sealed class PrintSettingsDialog : BrandForm
     public bool IncludeImported => _imported.Checked;
     public int RangeFrom => (int)_from.Value;
     public int RangeTo => (int)_to.Value;
+    public bool StartOnNotchedSection => _startSection?.SelectedIndex == 1;
 
     public PrintSettingsDialog(ProjectFile project, LabelLayout layout, int importedCount, bool forPrint)
     {
@@ -121,20 +123,30 @@ public sealed class PrintSettingsDialog : BrandForm
         Add(printer, 8, _driverHint);
 
         var job = Section("Setup.MediaSection");
-        Add(job, 1, LabeledField("Setup.Width", _width),
+        var jobRow = 1;
+        Add(job, jobRow++, LabeledField("Setup.Width", _width),
             LabeledField(_hasNotch ? "Setup.FeedPitch" : "Setup.Height", _height));
-        Add(job, 2, LabeledField("Setup.OffsetX", _offsetX), LabeledField("Setup.OffsetY", _offsetY));
-        Add(job, 3, LabeledField("Setup.Copies", _copies));
+        if (forPrint && _hasNotch)
+        {
+            _startSection = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+            _startSection.Items.Add(L10n.T("Print.SectionFull"));
+            _startSection.Items.Add(L10n.T("Print.SectionNotched"));
+            _startSection.SelectedIndex = 0;
+            Add(job, jobRow++, LabeledField("Print.StartSection", _startSection));
+            _startSection.SelectedIndexChanged += (_, _) => UpdateSummary();
+        }
+        Add(job, jobRow++, LabeledField("Setup.OffsetX", _offsetX), LabeledField("Setup.OffsetY", _offsetY));
+        Add(job, jobRow++, LabeledField("Setup.Copies", _copies));
         _heatField = OptionalField("Godex.Darkness", _setHeat, _heat);
         _stopField = OptionalField("Godex.Stop", _setStop, _stop);
         _gapField = LabeledField("Godex.Gap", _gap);
-        Add(job, 4, _heatField, _stopField);
-        Add(job, 5, _gapField);
+        Add(job, jobRow++, _heatField, _stopField);
+        Add(job, jobRow++, _gapField);
         _imported.Text = string.Format(L10n.T("Godex.AdditionalRecords"), importedCount);
         _imported.Checked = importedCount > 0;
         _imported.Margin = new Padding(0, 3, 0, 9);
         _imported.Visible = forPrint && importedCount > 0;
-        Add(job, 6, _imported);
+        Add(job, jobRow++, _imported);
         _range = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
@@ -143,11 +155,11 @@ public sealed class PrintSettingsDialog : BrandForm
         _range.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         _range.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         Add(_range, 0, LabeledField("Setup.RangeFrom", _from), LabeledField("Setup.RangeTo", _to));
-        Add(job, 7, _range);
+        Add(job, jobRow++, _range);
         _summary.Visible = forPrint;
-        Add(job, 8, _summary);
+        Add(job, jobRow++, _summary);
         _stockHint.Visible = _hasNotch;
-        Add(job, 9, _stockHint);
+        Add(job, jobRow, _stockHint);
         _imported.CheckedChanged += (_, _) => UpdateRange();
         _from.ValueChanged += (_, _) => UpdateSummary();
         _to.ValueChanged += (_, _) => UpdateSummary();
@@ -256,9 +268,9 @@ public sealed class PrintSettingsDialog : BrandForm
         _summary.Text = string.Format(L10n.T("Setup.PageTotal"), count);
         if (_hasNotch)
         {
-            _stockHint.Text = L10n.T("Setup.FixedNotchedStock");
+            _stockHint.Text = L10n.T("Setup.FixedNotchedStock") + Environment.NewLine + L10n.T("Setup.OffsetCalibration");
             if (_forPrint)
-                _stockHint.Text += Environment.NewLine + L10n.T("Print.StartPlain");
+                _stockHint.Text += Environment.NewLine + L10n.T(StartOnNotchedSection ? "Print.StartNotchedHint" : "Print.StartPlain");
         }
     }
 

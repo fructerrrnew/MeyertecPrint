@@ -159,6 +159,10 @@ try
         LabelSequence.CalculateFeedLengthUm(terminalLayout, 3) == 60_000 &&
         LabelSequence.CalculateFeedLengthUm(terminalLayout, 1) == 20_000 &&
         LabelSequence.CalculateFeedLengthUm(layout, 3, 2_000) == 94_000);
+    Check("Only patterned stock can start with one blank section",
+        LabelPrintPages.LeadingBlankSections(terminalLayout, true) == 1 &&
+        LabelPrintPages.LeadingBlankSections(terminalLayout, false) == 0 &&
+        LabelPrintPages.LeadingBlankSections(layout, true) == 0);
     var stockPreview = LabelPrintPages.CreateStockPreview(terminalLayout);
     var shifted = new PrintSettings { OffsetXMm = 0.25, OffsetYMm = 0.25 };
     var notchedRaster = LabelRasterPlan.Create(stockPreview[1], shifted, 300, 300);
