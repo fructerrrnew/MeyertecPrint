@@ -15,6 +15,7 @@
     <Compile Include="../../CsvBatch.cs" Link="CsvBatch.cs" />
     <Compile Include="../../SpreadsheetReader.cs" Link="SpreadsheetReader.cs" />
     <Compile Include="../../LabelNumbering.cs" Link="LabelNumbering.cs" />
+    <Compile Include="../../LabelDataExport.cs" Link="LabelDataExport.cs" />
     <Compile Include="../../LabelSequence.cs" Link="LabelSequence.cs" />
     <Compile Include="../../LabelTemplate.cs" Link="LabelTemplate.cs" />
     <Compile Include="../../L10n.cs" Link="L10n.cs" />

@@ -235,15 +235,20 @@ internal sealed partial class LinuxMainWindow
 
     private Task AddRecord()
     {
-        var fields = LabelPrintPages.CaptureFields(Pages[_record]);
-        var labels = _project!.Ribbon.Labels ??= [];
-        var printable = LabelPrintPages.PrintableRecords(Layout, labels).ToList();
+        var page = Pages[_record];
+        var fields = LabelPrintPages.CaptureFields(page);
+        var ribbon = _project!.Ribbon;
+        var labels = ribbon.Labels ??= [];
+        var printable = LabelPrintPages.PrintableRecords(ribbon).ToList();
         var offset = _record == 0 ? 0 : labels.IndexOf(printable[_record - 1]) + 1;
-        labels.Insert(offset, new LabelItem
+        var record = new LabelItem
         {
             Name = string.Join(" | ", fields.Values.Take(3)), Fields = fields, UseLayout = fields.Count == 0
-        });
+        };
+        if (!ribbon.ApplyLayoutToAll) LabelPrintPages.StoreRecordLayout(record, page);
+        labels.Insert(offset, record);
         _record++;
+        _selected = -1;
         RenumberRecords();
         Changed();
         return Task.CompletedTask;
@@ -252,12 +257,13 @@ internal sealed partial class LinuxMainWindow
     private async Task DeleteRecord()
     {
         if (_record <= 0) return;
-        var records = LabelPrintPages.PrintableRecords(Layout, _project!.Ribbon.Labels).ToList();
+        var records = LabelPrintPages.PrintableRecords(_project!.Ribbon).ToList();
         if (_record > records.Count) return;
         var form = new StackPanel();
         form.Children.Add(new TextBlock { Text = Tr($"Удалить этикетку {_record + 1} из проекта?", $"Delete label {_record + 1} from the project?") });
         if (!await ConfirmForm(Tr("Удаление этикетки", "Delete label"), form, Tr("Удалить", "Delete"))) return;
         _project.Ribbon.Labels.Remove(records[_record - 1]);
+        _selected = -1;
         RenumberRecords();
         Changed();
     }
@@ -269,10 +275,11 @@ internal sealed partial class LinuxMainWindow
 
     private async Task EditRecord()
     {
-        var records = LabelPrintPages.PrintableRecords(Layout, _project!.Ribbon.Labels).ToList();
+        var records = LabelPrintPages.PrintableRecords(_project!.Ribbon).ToList();
         if (_record == 0 || _record > records.Count) return;
         var record = records[_record - 1];
-        var fields = LabelPrintPages.GetBindings(Pages[_record]);
+        var page = Pages[_record];
+        var fields = LabelPrintPages.GetBindings(page);
         var inputs = new Dictionary<string, TextBox>();
         var form = new StackPanel { Spacing = 7 };
         for (var i = 0; i < fields.Count; i++)
@@ -285,16 +292,24 @@ internal sealed partial class LinuxMainWindow
         }
         if (inputs.Count == 0)
         {
-            await Message(Tr("Данные этикетки", "Label data"), Tr("На первой этикетке нет полей для подстановки.", "The first label has no variable fields."));
+            await Message(Tr("Данные этикетки", "Label data"), Tr("На этикетке нет полей для подстановки.", "This label has no variable fields."));
             return;
         }
         if (!await ConfirmForm(Tr("Данные этикетки", "Label data"), form, Tr("Применить", "Apply"))) return;
         var result = inputs.ToDictionary(p => p.Key, p => p.Value.Text ?? "");
-        var check = Layout.Clone();
-        LabelPrintPages.ApplyFields(check, result);
-        record.Fields = result;
-        record.UseLayout = result.Count == 0;
-        record.Name = string.Join(" | ", result.Values.Take(3));
+        if (!_project.Ribbon.ApplyLayoutToAll)
+        {
+            LayoutHistory.Push(page);
+            LabelPrintPages.ApplyFields(page, result);
+            LabelPrintPages.StoreRecordLayout(record, page);
+        }
+        else
+        {
+            record.Fields ??= [];
+            foreach (var (field, value) in result) record.Fields[field] = value;
+            record.UseLayout = false;
+            record.Name = string.Join(" | ", result.Values.Where(value => !string.IsNullOrWhiteSpace(value)).Take(3));
+        }
         Changed();
     }
 
@@ -419,7 +434,9 @@ internal sealed partial class LinuxMainWindow
         _history.Clear();
         _project!.Ribbon.Layout = proposed;
         _project.Ribbon.Labels = batch.Remaining;
+        LabelPrintPages.RefreshIndividualLayoutBase(_project.Ribbon);
         _record = 0;
+        _selected = -1;
         Changed();
     }
 
@@ -441,7 +458,7 @@ internal sealed partial class LinuxMainWindow
         var preview = new LayoutCanvas { Height = 360 };
         body.Children.Add(nav);
         if (Layout.AlternateNotch is not null)
-            body.Children.Add(new TextBlock { Text = L10n.T("Ribbon.SkipNotchedSections"), TextWrapping = TextWrapping.Wrap });
+            body.Children.Add(new TextBlock { Text = L10n.T("Ribbon.AlternatingNotchedSections"), TextWrapping = TextWrapping.Wrap });
         body.Children.Add(preview);
         void Refresh()
         {
@@ -502,14 +519,27 @@ internal sealed partial class LinuxMainWindow
         form.Children.Add(hostFields);
         var patterned = Layout.AlternateNotch is not null;
         ComboBox? initialSection = null;
+        CheckBox? alignToNotch = null;
         if (patterned)
         {
+            var align = new CheckBox { Content = L10n.T("Print.AlignToNotch"), IsChecked = previous.AlignToNotch };
+            alignToNotch = align;
             var section = Choice([L10n.T("Print.SectionFull"), L10n.T("Print.SectionNotched")]);
             initialSection = section;
             var hint = new TextBlock { TextWrapping = TextWrapping.Wrap };
-            void RefreshStart() => hint.Text = L10n.T(section.SelectedIndex == 1 ? "Print.StartNotchedHint" : "Print.StartPlain");
+            void RefreshStart()
+            {
+                align.IsEnabled = connection.SelectedIndex != 1;
+                var alignEnabled = align.IsEnabled && align.IsChecked == true;
+                section.IsEnabled = !alignEnabled;
+                hint.Text = L10n.T(alignEnabled ? "Print.AlignToNotchHint" :
+                    section.SelectedIndex == 1 ? "Print.StartNotchedHint" : "Print.StartPlain");
+            }
+            align.IsCheckedChanged += (_, _) => RefreshStart();
+            connection.SelectionChanged += (_, _) => RefreshStart();
             section.SelectionChanged += (_, _) => RefreshStart();
             RefreshStart();
+            form.Children.Add(align);
             Field(form, L10n.T("Print.StartSection"), section);
             form.Children.Add(hint);
         }
@@ -545,13 +575,14 @@ internal sealed partial class LinuxMainWindow
             SerialBaudRate = baudRates[baud.SelectedIndex], NetworkHost = EmptyToNull(host.Text),
             Copies = (int)(copies.Value ?? 1), OffsetXMm = (double)(offsetX.Value ?? 0), OffsetYMm = (double)(offsetY.Value ?? 0),
             MediaGapMm = patterned ? 0 : gap.Value ?? 0, Temperature = heat.Value is { } temperature ? (int)temperature : null,
-            CutOffsetMm = cut.Value is { } stop ? (double)stop : null
+            CutOffsetMm = cut.Value is { } stop ? (double)stop : null,
+            AlignToNotch = alignToNotch is { IsChecked: true, IsEnabled: true }
         };
         project.Print = settings;
         project.PrinterModel = "G530";
         Changed();
         if (send.IsChecked != true) return;
-        var startOnNotchedSection = initialSection?.SelectedIndex == 1;
+        var startOnNotchedSection = !settings.AlignToNotch && initialSection?.SelectedIndex == 1;
         var pages = Pages.Skip(first - 1).Take(last - first + 1).ToList();
 
         using var cancellation = new CancellationTokenSource();

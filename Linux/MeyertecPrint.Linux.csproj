@@ -20,7 +20,7 @@
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="../L10n.cs;../CsvReader.cs;../CsvBatch.cs;../SpreadsheetReader.cs;../LabelNumbering.cs;
+    <Compile Include="../L10n.cs;../CsvReader.cs;../CsvBatch.cs;../SpreadsheetReader.cs;../LabelNumbering.cs;../LabelDataExport.cs;
                       ../LabelModel.cs;../LabelTypes.cs;../LabelPrintLayout.cs;../LabelPrintPages.cs;../LabelSequence.cs;
                       ../GeometryOperations.cs;../MeyertecProject.cs;../UndoRedo.cs;../WstxIo.cs;
                       ../LabelTemplate.cs;../TemplateFeed.cs;../TemplateFeedSettings.cs;../PrinterPlugin.cs;../Godex*.cs;

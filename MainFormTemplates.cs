@@ -115,7 +115,7 @@ public partial class MainForm
             };
             if (save.ShowDialog(this) != DialogResult.OK) return;
 
-            var preview = TemplateImage.Render(_editor.Layout, _project.Print);
+            var preview = TemplateImage.Render(_project.Ribbon.GetLayout(), _project.Print);
             var template = LabelTemplate.FromProject(_project, details.TemplateName, details.Material,
                 details.SaveNew ? null : previous, preview);
             TemplateLibrary.SaveFile(template, save.FileName);

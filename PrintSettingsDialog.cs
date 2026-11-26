@@ -41,6 +41,7 @@ public sealed class PrintSettingsDialog : BrandForm
     private readonly Control _heatField, _stopField;
     private readonly TableLayoutPanel _range;
     private readonly ComboBox? _startSection;
+    private readonly CheckBox? _alignToNotch;
     private readonly NumericUpDown _width = Number(1, 300, 60), _height = Number(1, 762, 30);
     private readonly NumericUpDown _offsetX = Number(-50, 50, 0), _offsetY = Number(-50, 50, 0);
     private readonly NumericUpDown _copies = Number(1, 500, 1, 0);
@@ -69,7 +70,7 @@ public sealed class PrintSettingsDialog : BrandForm
     public bool IncludeImported => _imported.Checked;
     public int RangeFrom => (int)_from.Value;
     public int RangeTo => (int)_to.Value;
-    public bool StartOnNotchedSection => _startSection?.SelectedIndex == 1;
+    public bool StartOnNotchedSection => !UseNotchAlignment && _startSection?.SelectedIndex == 1;
 
     public PrintSettingsDialog(ProjectFile project, LabelLayout layout, int importedCount, bool forPrint)
     {
@@ -126,6 +127,16 @@ public sealed class PrintSettingsDialog : BrandForm
         var jobRow = 1;
         Add(job, jobRow++, LabeledField("Setup.Width", _width),
             LabeledField(_hasNotch ? "Setup.FeedPitch" : "Setup.Height", _height));
+        if (_hasNotch)
+        {
+            _alignToNotch = new CheckBox
+            {
+                Text = L10n.T("Print.AlignToNotch"), AutoSize = true, Checked = _original.AlignToNotch,
+                Margin = new Padding(0, 3, 0, 9)
+            };
+            Add(job, jobRow++, _alignToNotch);
+            _alignToNotch.CheckedChanged += (_, _) => UpdateNotchAlignment();
+        }
         if (forPrint && _hasNotch)
         {
             _startSection = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
@@ -269,7 +280,9 @@ public sealed class PrintSettingsDialog : BrandForm
         if (_hasNotch)
         {
             _stockHint.Text = L10n.T("Setup.FixedNotchedStock") + Environment.NewLine + L10n.T("Setup.OffsetCalibration");
-            if (_forPrint)
+            if (UseNotchAlignment)
+                _stockHint.Text += Environment.NewLine + L10n.T("Print.AlignToNotchHint");
+            else if (_forPrint)
                 _stockHint.Text += Environment.NewLine + L10n.T(StartOnNotchedSection ? "Print.StartNotchedHint" : "Print.StartPlain");
         }
     }
@@ -371,6 +384,12 @@ public sealed class PrintSettingsDialog : BrandForm
 
     private string SelectedBackend => (_backend.SelectedItem as ConnectionOption)?.Key ?? GodexPrintJob.DriverBackend;
 
+    private bool CanAlignToNotch => _hasNotch &&
+        (SelectedBackend is GodexPrintJob.SdkBackend or GodexPrintJob.DirectBackend) &&
+        ((_connection.SelectedItem as ConnectionOption)?.Key is "usb" or "ethernet");
+
+    private bool UseNotchAlignment => CanAlignToNotch && _alignToNotch?.Checked == true;
+
     private void PopulateBackends(string preferred)
     {
         _backend.Items.Clear();
@@ -424,7 +443,16 @@ public sealed class PrintSettingsDialog : BrandForm
             : sdkUsb ? "Godex.SdkUsbHint" : serial ? sdk ? "Godex.SdkSerialPort" : "Godex.SerialHint" : "Godex.DirectHint");
         if (driver && _hasNotch)
             _driverHint.Text += Environment.NewLine + L10n.T("Print.ContinuousDriver");
+        UpdateNotchAlignment();
         ShowStatus(driver && _queues.Items.Count == 0 ? L10n.T("Setup.NoQueues") : string.Empty, error: _forPrint);
+    }
+
+    private void UpdateNotchAlignment()
+    {
+        if (_alignToNotch is null) return;
+        _alignToNotch.Enabled = CanAlignToNotch;
+        if (_startSection is not null) _startSection.Enabled = !UseNotchAlignment;
+        UpdateSummary();
     }
 
     private void ShowStatus(string message, bool error = false, Control? field = null)
@@ -548,7 +576,8 @@ public sealed class PrintSettingsDialog : BrandForm
             UsbDevice = backend == GodexPrintJob.SdkBackend && connection.Key == "usb" ? _usb.Text.Trim() : null,
             OffsetXMm = (double)_offsetX.Value, OffsetYMm = (double)_offsetY.Value,
             Copies = (int)_copies.Value, Temperature = _setHeat.Checked ? (int)_heat.Value : null,
-            CutOffsetMm = _setStop.Checked ? (double)_stop.Value : null, MediaGapMm = _gap.Value
+            CutOffsetMm = _setStop.Checked ? (double)_stop.Value : null, MediaGapMm = _gap.Value,
+            AlignToNotch = UseNotchAlignment
         };
         if (!driver)
         {

@@ -182,7 +182,7 @@ public partial class LabelEditorControl
             try
             {
                 var displayDpi = Math.Clamp((float)(_pixelsPerMm * 25.4), 150f, 300f);
-                _canvasRaster = LabelPrintRenderer.Render(_layout, _displayPrintSettings, displayDpi, displayDpi);
+                _canvasRaster = LabelPrintRenderer.Render(_layout, _displayPrintSettings, displayDpi, displayDpi, showMedia: true);
             }
             catch (Exception ex) when (ex is InvalidDataException or OverflowException or ArgumentException)
             { _canvasRasterError = ex.Message; }

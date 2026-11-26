@@ -21,6 +21,7 @@ public partial class MainForm : BrandForm
     private ToolStripMenuItem _saveItem = null!;
     private ToolStripMenuItem _saveAsItem = null!;
     private ToolStripMenuItem _importCsvItem = null!;
+    private ToolStripMenuItem _exportDataItem = null!;
     private ToolStripMenuItem _numberingItem = null!;
     private ToolStripMenuItem _openWstxItem = null!;
     private ToolStripMenuItem _saveWstxItem = null!;
@@ -47,6 +48,7 @@ public partial class MainForm : BrandForm
     private ListView _ribbonList = null!;
     private LabelSequenceView _labelSequence = null!;
     private Label _ribbonHint = null!;
+    private CheckBox _applyLayoutToAll = null!;
     private ColumnHeader _numberColumn = null!;
     private ColumnHeader _nameColumn = null!;
     private Button _recordAdd = null!, _recordEdit = null!, _recordCopy = null!,
@@ -56,12 +58,15 @@ public partial class MainForm : BrandForm
     private ToolStripStatusLabel _statusRight = null!;
 
     private ProjectFile? _project;
+    private LabelItem? _editingRecord;
     private string? _projectPath;
     private bool _dirty;
     private PrintDocument? _printDocument;
     private RecoveryStore? _recovery;
     private string? _recoveredPath;
     private readonly System.Windows.Forms.Timer _recoveryTimer = new() { Interval = 60_000 };
+
+    private LabelLayout BaseLayout => _project!.Ribbon.GetLayout();
 
     public MainForm()
     {
@@ -121,6 +126,8 @@ public partial class MainForm : BrandForm
         _saveAsItem.Click += (_, _) => SaveProject(saveAs: true);
         _importCsvItem = new ToolStripMenuItem();
         _importCsvItem.Click += (_, _) => ImportCsv();
+        _exportDataItem = new ToolStripMenuItem();
+        _exportDataItem.Click += (_, _) => ExportLabelData();
         _numberingItem = new ToolStripMenuItem();
         _numberingItem.Click += (_, _) => NumberLabels();
         _openWstxItem = new ToolStripMenuItem();
@@ -148,7 +155,7 @@ public partial class MainForm : BrandForm
 
         _fileMenu.DropDownItems.AddRange([
             _newItem, _openItem, _saveItem, _saveAsItem, new ToolStripSeparator(),
-            _importCsvItem, _numberingItem, _openWstxItem, _saveWstxItem, new ToolStripSeparator(),
+            _importCsvItem, _exportDataItem, _numberingItem, _openWstxItem, _saveWstxItem, new ToolStripSeparator(),
             _pageSettingsItem, _printSettingsItem, _previewItem, _printItem, new ToolStripSeparator(), _exitItem
         ]);
 
@@ -321,18 +328,31 @@ public partial class MainForm : BrandForm
             ForeColor = Theme.SecondaryText, BackColor = SystemInformation.HighContrast ? Theme.Surface : Theme.LightBackground,
             Margin = new Padding(0, 0, 0, 10)
         };
-        var batch = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        _applyLayoutToAll = new CheckBox
+        {
+            AutoSize = true, UseMnemonic = false, Margin = new Padding(1, 0, 0, 9)
+        };
+        _applyLayoutToAll.CheckedChanged += (_, _) => ChangeLayoutSharing();
+        var batch = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
         batch.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        batch.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         batch.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         batch.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         batch.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         batch.Controls.Add(_ribbonHint, 0, 0);
+        batch.Controls.Add(_applyLayoutToAll, 0, 1);
         _labelSequence = new LabelSequenceView { Dock = DockStyle.Fill };
         _labelSequence.PageSelected += index =>
         {
             if (index >= 0 && index < _ribbonList.Items.Count)
                 SelectRecord(_ribbonList.Items[index].Tag as LabelItem);
         };
+        _labelSequence.DoubleClick += (_, _) => EditRecord();
+        _labelSequence.PreviewKeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) e.IsInputKey = true;
+        };
+        _labelSequence.KeyDown += OnRibbonKeyDown;
         var strip = new SplitContainer
         {
             Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, Size = new Size(800, 400),
@@ -340,14 +360,18 @@ public partial class MainForm : BrandForm
         };
         strip.Panel1.Controls.Add(_labelSequence);
         strip.Panel2.Controls.Add(_ribbonList);
-        batch.Controls.Add(strip, 0, 1);
-        batch.Controls.Add(actions, 0, 2);
+        batch.Controls.Add(strip, 0, 2);
+        batch.Controls.Add(actions, 0, 3);
         _ribbonTab.Controls.Add(batch);
         _editorTab = new TabPage { BackColor = Theme.LightBackground };
         _editorTab.Controls.Add(_editor);
         _tabs.TabPages.Add(_editorTab);
         _tabs.TabPages.Add(_ribbonTab);
-        _tabs.SelectedIndexChanged += (_, _) => RefreshSequence();
+        _tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (_tabs.SelectedTab == _ribbonTab) _editor.CommitPendingEdit();
+            RefreshSequence();
+        };
     }
 
     private void BuildStatusBar()
@@ -376,6 +400,7 @@ public partial class MainForm : BrandForm
         _saveItem.Text = L10n.T("File.SaveProject");
         _saveAsItem.Text = L10n.T("Toolbar.SaveAs") + "…";
         _importCsvItem.Text = L10n.T("File.ImportCsv");
+        _exportDataItem.Text = L10n.T("File.ExportLabelData");
         _numberingItem.Text = L10n.T("Numbering.Menu");
         ApplyTemplateStrings();
         _openWstxItem.Text = L10n.T("File.OpenWstx");
@@ -387,7 +412,7 @@ public partial class MainForm : BrandForm
         _unitsMmItem.Text = L10n.T("View.UnitsMm");
         _unitsInchItem.Text = L10n.T("View.UnitsInch");
         _ribbonTab.Text = L10n.T("Tab.Ribbon");
-        _editorTab.Text = L10n.T("Tab.Editor");
+        _applyLayoutToAll.Text = L10n.T("Ribbon.ApplyLayoutToAll");
         SetToolLabel(_tbNew, "File.NewProject", "Ctrl+N");
         SetToolLabel(_tbOpen, "File.OpenProject", "Ctrl+O");
         SetToolLabel(_tbSave, "Toolbar.Save", "Ctrl+S");
@@ -702,9 +727,9 @@ public partial class MainForm : BrandForm
         return _printDocument;
     }
 
-    internal static void SetLabelPaper(PrintDocument document, LabelLayout layout, PageSettings? page = null)
+    internal static void SetLabelPaper(PrintDocument document, LabelLayout layout)
     {
-        page ??= document.DefaultPageSettings;
+        var page = document.DefaultPageSettings;
         page.PrinterSettings = document.PrinterSettings;
         var width = checked((int)Math.Round(layout.MediaWidthUm / 254d));
         var height = checked((int)Math.Round(layout.MediaHeightUm / 254d));
@@ -721,9 +746,9 @@ public partial class MainForm : BrandForm
         if (_project is null || !_editor.HasProject) return;
         _editor.CommitPendingEdit();
         var plugin = PrinterPlugins.All.FirstOrDefault(x => x.Name == _project.PrinterModel);
-        using var dialog = new PageSettingsDialog(_editor.Layout, plugin);
+        using var dialog = new PageSettingsDialog(BaseLayout, plugin);
         if (dialog.ShowDialog(this) == DialogResult.OK)
-            _editor.ApplyPrintSettings(_project.Print, dialog.MediaWidthUm, dialog.MediaHeightUm);
+            ApplyProjectPrintSettings(dialog.MediaWidthUm, dialog.MediaHeightUm);
     }
 
     private void PrintSettings() => ShowPrintSetup(false);
@@ -740,15 +765,15 @@ public partial class MainForm : BrandForm
         _editor.CommitPendingEdit();
         try
         {
-            var importedCount = LabelPrintPages.CountImported(_editor.Layout, _project.Ribbon.Labels);
-            using var dialog = new PrintSettingsDialog(_project, _editor.Layout, importedCount, forPrint);
+            var importedCount = LabelPrintPages.CountImported(_project.Ribbon);
+            using var dialog = new PrintSettingsDialog(_project, BaseLayout, importedCount, forPrint);
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             _project.Print = dialog.Result;
             _project.PrinterModel = dialog.PrinterModel;
-            _editor.ApplyPrintSettings(_project.Print, dialog.MediaWidthUm, dialog.MediaHeightUm);
+            ApplyProjectPrintSettings(dialog.MediaWidthUm, dialog.MediaHeightUm);
             if (!forPrint) return;
 
-            var pages = LabelPrintPages.Create(_editor.Layout, _project.Ribbon.Labels, dialog.IncludeImported);
+            var pages = LabelPrintPages.Create(_project.Ribbon, dialog.IncludeImported);
             var plugin = PrinterPlugins.All.FirstOrDefault(x => x.Name == _project.PrinterModel);
             using var progress = new PrintProgressDialog(pages, dialog.RangeFrom, dialog.RangeTo, _project.Print, plugin,
                 startOnNotchedSection: dialog.StartOnNotchedSection);
@@ -768,6 +793,20 @@ public partial class MainForm : BrandForm
         }
     }
 
+    private void ApplyProjectPrintSettings(long mediaWidthUm, long mediaHeightUm)
+    {
+        var record = _editingRecord;
+        if (record is not null) LoadLabelLayout(null);
+        try
+        {
+            _editor.ApplyPrintSettings(_project!.Print, mediaWidthUm, mediaHeightUm);
+        }
+        finally
+        {
+            if (record is not null) LoadLabelLayout(record);
+        }
+    }
+
     // ---------------- РЕДАКТОР / ПРЕДПРОСМОТР ----------------
 
     /// <summary>Загружает макет и показывает ленту с чередующимися секциями.</summary>
@@ -775,11 +814,19 @@ public partial class MainForm : BrandForm
     {
         if (_project is null)
             return;
-        _editor.LoadLayout(_project.Ribbon.GetLayout(),
-            _project.Ribbon.LabelTypeName ?? "Custom label", _project.Print);
-        _tabs.SelectedTab = _editor.Layout.AlternateNotch is not null && _project.Ribbon.Labels.Count > 0
+        LoadLabelLayout(null);
+        _tabs.SelectedTab = BaseLayout.AlternateNotch is not null && _project.Ribbon.Labels.Count > 0
             ? _ribbonTab : _editorTab;
         if (_tabs.Visible && _tabs.SelectedTab == _editorTab) _editor.FocusCanvas();
+    }
+
+    private void LoadLabelLayout(LabelItem? record)
+    {
+        var ribbon = _project!.Ribbon;
+        var layout = record is null ? BaseLayout : LabelPrintPages.ResolveRecordLayout(ribbon, record);
+        _editor.LoadLayout(layout, ribbon.LabelTypeName ?? "Custom label", _project.Print);
+        _editingRecord = record;
+        UpdateEditorTab();
     }
 
     /// <summary>Редактор изменил макет — синхронизируем с проектом и помечаем как изменённый.</summary>
@@ -787,8 +834,13 @@ public partial class MainForm : BrandForm
     {
         if (_project is null)
             return;
-        _project.Ribbon.Layout = _editor.Layout;
-        _project.Ribbon.LabelTypeName = _editor.TypeName;
+        if (_editingRecord is { } record)
+            LabelPrintPages.StoreRecordLayout(record, _editor.Layout);
+        else
+        {
+            _project.Ribbon.Layout = _editor.Layout;
+            _project.Ribbon.LabelTypeName = _editor.TypeName;
+        }
         _dirty = true;
         RefreshProjectUi();
     }
@@ -799,7 +851,7 @@ public partial class MainForm : BrandForm
         if (_project is null || !_editor.HasProject)
             return;
         _editor.CommitPendingEdit();
-        var pages = LabelPrintPages.Create(_editor.Layout, _project.Ribbon.Labels, true);
+        var pages = LabelPrintPages.Create(_project.Ribbon);
         var plugin = PrinterPlugins.All.FirstOrDefault(x => x.Name == _project.PrinterModel);
         float dpiX = plugin?.ResolutionDpi ?? 300, dpiY = dpiX;
         try
@@ -843,13 +895,13 @@ public partial class MainForm : BrandForm
         }
 
         _editor.CommitPendingEdit();
-        using var dialog = new CsvImportDialog(_editor.Layout);
+        using var dialog = new CsvImportDialog(BaseLayout);
         if (dialog.ShowDialog(this) != DialogResult.OK || dialog.DataRows.Count == 0) return;
         var rows = dialog.DataRows;
         try
         {
             // Prepare and validate the complete batch before mutating the live project.
-            ApplyBatch(CsvBatch.Prepare(_editor.Layout, rows, dialog.TargetColumns));
+            ApplyBatch(CsvBatch.Prepare(BaseLayout, rows, dialog.TargetColumns));
         }
         catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
         {
@@ -861,7 +913,7 @@ public partial class MainForm : BrandForm
     {
         if (_project is null) return;
         _editor.CommitPendingEdit();
-        using var dialog = new NumberingDialog(_editor.Layout);
+        using var dialog = new NumberingDialog(BaseLayout);
         if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Prepared is { } batch)
             ApplyBatch(batch);
     }
@@ -873,9 +925,11 @@ public partial class MainForm : BrandForm
             BrandMessageBox.Show(this, L10n.T("Ribbon.ReplaceBatch"), AppTitle,
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-        LabelPrintPages.ApplyFields(_editor.Layout, batch.FirstFields);
+        LabelPrintPages.ApplyFields(BaseLayout, batch.FirstFields);
         _project.Ribbon.Labels = batch.Remaining;
-        _editor.Redraw();
+        LabelPrintPages.RefreshIndividualLayoutBase(_project.Ribbon);
+        if (_editingRecord is not null) LoadLabelLayout(null);
+        else _editor.Redraw();
         _dirty = true;
         _tabs.SelectedTab = _ribbonTab;
         RefreshProjectUi();
@@ -938,7 +992,7 @@ public partial class MainForm : BrandForm
         }
 
         _editor.CommitPendingEdit();
-        if (_editor.Layout.AlternateNotch is not null)
+        if (BaseLayout.AlternateNotch is not null)
         {
             BrandMessageBox.Show(this, L10n.T("Wstx.NotchedStock"), AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -959,7 +1013,7 @@ public partial class MainForm : BrandForm
 
         try
         {
-            WstxIo.Write(_project.Name, _editor.Layout, dialog.FileName);
+            WstxIo.Write(_project.Name, BaseLayout, dialog.FileName);
         }
         catch (Exception ex)
         {
@@ -985,7 +1039,7 @@ public partial class MainForm : BrandForm
         Text = _project is null ? AppTitle : $"{_project.Name}{(_dirty ? " *" : "")} — {AppTitle}";
         _welcome.Visible = !hasProject;
         _toolbar.Visible = _tabs.Visible = _statusStrip.Visible = hasProject;
-        _saveItem.Enabled = _saveAsItem.Enabled = _saveWstxItem.Enabled = _importCsvItem.Enabled =
+        _saveItem.Enabled = _saveAsItem.Enabled = _saveWstxItem.Enabled = _importCsvItem.Enabled = _exportDataItem.Enabled =
             _numberingItem.Enabled = _saveTemplateItem.Enabled = _pageSettingsItem.Enabled =
             _printSettingsItem.Enabled = _previewItem.Enabled = _printItem.Enabled = hasProject;
 
@@ -994,8 +1048,9 @@ public partial class MainForm : BrandForm
         _ribbonList.Items.Clear();
         if (_project is not null)
         {
+            _applyLayoutToAll.Checked = _project.Ribbon.ApplyLayoutToAll;
             _ribbonList.Items.Add(new ListViewItem(new[] { "1", L10n.T("Ribbon.CurrentLayout") }));
-            foreach (var label in LabelPrintPages.PrintableRecords(_editor.Layout, _project.Ribbon.Labels))
+            foreach (var label in LabelPrintPages.PrintableRecords(_project.Ribbon))
             {
                 var name = string.IsNullOrWhiteSpace(label.Name) ? L10n.T("Ribbon.LayoutCopy") : label.Name;
                 var item = new ListViewItem(new[] { (_ribbonList.Items.Count + 1).ToString(), name })
@@ -1010,16 +1065,17 @@ public partial class MainForm : BrandForm
         }
         _ribbonList.EndUpdate();
         FitRibbonColumns();
+        UpdateEditorTab();
         UpdateRecordActions();
         RefreshSequence();
         _ribbonHint.Visible = hasProject;
         if (hasProject)
         {
             var gapUm = Units.MmToUm((double)Math.Clamp(_project!.Print.MediaGapMm, 0, 762));
-            var length = LabelSequence.CalculateFeedLengthUm(_editor.Layout, _ribbonList.Items.Count, gapUm);
+            var length = LabelSequence.CalculateFeedLengthUm(BaseLayout, _ribbonList.Items.Count, gapUm);
             _ribbonHint.Text = string.Format(L10n.T("Ribbon.TotalLength"), Units.UmToMm(length), L10n.T("Unit.Mm"));
-            if (_editor.Layout.AlternateNotch is not null)
-                _ribbonHint.Text += "  ·  " + L10n.T("Ribbon.SkipNotchedSections");
+            if (BaseLayout.AlternateNotch is not null)
+                _ribbonHint.Text += "  ·  " + L10n.T("Ribbon.AlternatingNotchedSections");
         }
 
         _statusLeft.Text = string.Format(L10n.T("Status.Records"), _ribbonList.Items.Count);
@@ -1042,8 +1098,36 @@ public partial class MainForm : BrandForm
     private void RefreshSequence()
     {
         if (_tabs.SelectedTab != _ribbonTab || _project is null) return;
-        _labelSequence.SetPages(LabelPrintPages.Create(_editor.Layout, _project.Ribbon.Labels, true), _project.Print);
+        _labelSequence.SetPages(LabelPrintPages.Create(_project.Ribbon), _project.Print);
         _labelSequence.SelectedIndex = _ribbonList.SelectedIndices.Count == 0 ? 0 : _ribbonList.SelectedIndices[0];
+    }
+
+    private void ChangeLayoutSharing()
+    {
+        var applyToAll = _applyLayoutToAll.Checked;
+        if (_project is null || _project.Ribbon.ApplyLayoutToAll == applyToAll) return;
+        _editor.CommitPendingEdit();
+        LabelPrintPages.SetApplyLayoutToAll(_project.Ribbon, applyToAll);
+        if (applyToAll && _editingRecord is not null) LoadLabelLayout(null);
+        _dirty = true;
+        RefreshProjectUi();
+    }
+
+    private void UpdateEditorTab()
+    {
+        var record = _editingRecord is null ? null : _ribbonList.Items.Cast<ListViewItem>()
+            .FirstOrDefault(item => ReferenceEquals(item.Tag, _editingRecord));
+        if (record is not null && _editor.Layout.AlternateNotch is not null)
+        {
+            var notched = record.Index % 2 != 0;
+            if (_editor.Layout.IsNotchedSection != notched)
+            {
+                _editor.Layout.IsNotchedSection = notched;
+                _editor.Redraw();
+            }
+        }
+        _editorTab.Text = L10n.T("Tab.Editor") +
+            (record is null ? string.Empty : $" · {L10n.T("Ribbon.Number")} {record.Index + 1}");
     }
 
     private void UpdateRecordActions()
@@ -1051,8 +1135,9 @@ public partial class MainForm : BrandForm
         var index = _ribbonList.SelectedIndices.Count == 0 ? -1 : _ribbonList.SelectedIndices[0];
         if (index >= 0) _labelSequence.SelectedIndex = index;
         _recordAdd.Enabled = _project is not null;
-        _recordEdit.Enabled = index == 0 || index > 0 && SelectedRecord()?.UseLayout == false;
-        _recordEdit.Text = L10n.T(index == 0 ? "Ribbon.EditLayout" : "Ribbon.EditRecord");
+        var useEditor = index == 0 || _project?.Ribbon.ApplyLayoutToAll == false;
+        _recordEdit.Enabled = index >= 0 && (useEditor || SelectedRecord()?.UseLayout == false);
+        _recordEdit.Text = L10n.T(useEditor ? "Ribbon.EditLayout" : "Ribbon.EditRecord");
         _recordCopy.Enabled = index >= 0;
         _recordDelete.Enabled = index > 0;
         _recordUp.Enabled = index > 1;
@@ -1082,18 +1167,35 @@ public partial class MainForm : BrandForm
     {
         if (_project is null || _ribbonList.SelectedIndices.Count == 0) return;
         var record = SelectedRecord();
-        if (record?.UseLayout == true) return;
-        if (record is null)
+        if (record is null || !_project.Ribbon.ApplyLayoutToAll)
         {
-            _tabs.SelectedTab = _editorTab;
-            _editor.FocusCanvas();
+            OpenRecordEditor(record);
             return;
         }
-        using var dialog = new RibbonRecordDialog(_editor.Layout, record.Fields);
+        if (record.UseLayout) return;
+        using var dialog = new RibbonRecordDialog(BaseLayout, record.Fields);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         record.Fields = dialog.Result; record.Name = RecordName(record.Fields);
         _dirty = true;
         RefreshProjectUi();
+    }
+
+    private void OpenRecordEditor(LabelItem? record)
+    {
+        try
+        {
+            if (!ReferenceEquals(record, _editingRecord))
+            {
+                _editor.CommitPendingEdit();
+                LoadLabelLayout(record);
+            }
+            _tabs.SelectedTab = _editorTab;
+            _editor.FocusCanvas();
+        }
+        catch (InvalidDataException ex)
+        {
+            BrandMessageBox.Show(this, ex.Message, AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
     private void CopyRecord()
         => InsertRecord(edit: false);
@@ -1106,19 +1208,27 @@ public partial class MainForm : BrandForm
         if (_project is null) return;
         _editor.CommitPendingEdit();
         var selected = SelectedRecord();
-        var fields = selected is null || edit ? LabelPrintPages.CaptureFields(_editor.Layout) : new(selected.Fields);
-        if (edit && fields.Count > 0)
+        var applyToAll = _project.Ribbon.ApplyLayoutToAll;
+        var fields = selected is null || edit ? LabelPrintPages.CaptureFields(BaseLayout) : new(selected.Fields);
+        if (edit && applyToAll && fields.Count > 0)
         {
-            using var dialog = new RibbonRecordDialog(_editor.Layout, fields);
+            using var dialog = new RibbonRecordDialog(BaseLayout, fields);
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             fields = dialog.Result;
         }
-        var copy = new LabelItem { Fields = fields, Name = RecordName(fields), UseLayout = fields.Count == 0 };
+        var copy = new LabelItem
+        {
+            Fields = fields, Name = RecordName(fields), UseLayout = fields.Count == 0,
+            Layout = !edit ? selected?.Layout?.Clone() : null
+        };
+        if (!applyToAll && (edit || selected is null))
+            LabelPrintPages.StoreRecordLayout(copy, BaseLayout);
         var position = selected is null ? 0 : _project.Ribbon.Labels.IndexOf(selected) + 1;
         _project.Ribbon.Labels.Insert(position, copy);
         _dirty = true;
         RefreshProjectUi();
         SelectRecord(copy);
+        if (edit && !applyToAll) OpenRecordEditor(copy);
     }
     private void DeleteRecord()
     {
@@ -1127,6 +1237,7 @@ public partial class MainForm : BrandForm
         if (BrandMessageBox.Show(this, L10n.T("Ribbon.ConfirmDelete"), AppTitle,
             MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         var index = _ribbonList.SelectedIndices[0];
+        if (ReferenceEquals(record, _editingRecord)) LoadLabelLayout(null);
         _project.Ribbon.Labels.Remove(record);
         _dirty = true;
         RefreshProjectUi();

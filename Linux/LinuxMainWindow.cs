@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -22,6 +23,7 @@ internal sealed partial class LinuxMainWindow : Window
     private static readonly FilePickerFileType WorksheetFiles = new("CSV / Excel") { Patterns = ["*.csv", "*.xlsx", "*.xls", "*.xlsb"] };
     private readonly TemplateLibrary _templates = new();
     private readonly UndoRedo _history = new();
+    private readonly ConditionalWeakTable<LabelItem, UndoRedo> _recordHistory = new();
     private readonly LayoutCanvas _canvas = new();
     private readonly ContentControl _workspace = new();
     private readonly ContentControl _inspector = new();
@@ -37,10 +39,15 @@ internal sealed partial class LinuxMainWindow : Window
     private int _selected = -1;
     private bool _updatingList;
     private List<Element> _elements = [];
+    private LabelItem? _layoutRecord;
+    private LabelLayout? _recordLayout;
     private bool _busy;
 
     private LabelLayout Layout => _project!.Ribbon.GetLayout();
-    private IReadOnlyList<LabelLayout> Pages => LabelPrintPages.Create(Layout, _project!.Ribbon.Labels, true);
+    private LabelLayout EditingLayout => _recordLayout ?? Layout;
+    private IReadOnlyList<LabelLayout> Pages => LabelPrintPages.Create(_project!.Ribbon);
+    private bool CanEditLayout => _record == 0 || _recordLayout is not null;
+    private UndoRedo LayoutHistory => _layoutRecord is { } record ? _recordHistory.GetOrCreateValue(record) : _history;
 
     public LinuxMainWindow(string? path)
     {
@@ -59,21 +66,21 @@ internal sealed partial class LinuxMainWindow : Window
         _canvas.SelectionRequested += SelectElement;
         _canvas.MoveRequested += (index, dx, dy) =>
         {
-            if (_record != 0 || index < 0 || index >= _elements.Count || _elements[index].Object is not { } item) return;
+            if (!CanEditLayout || index < 0 || index >= _elements.Count || _elements[index].Object is not { } item) return;
             var offsetX = Units.MmToUm(_project!.Print.OffsetXMm);
             var offsetY = Units.MmToUm(_project.Print.OffsetYMm);
             var left = Math.Max(0, -offsetX);
             var top = Math.Max(0, -offsetY);
-            var right = Layout.MediaWidthUm - item.WidthUm - Math.Max(0, offsetX);
-            var bottom = Layout.MediaHeightUm - item.HeightUm - Math.Max(0, offsetY);
+            var right = EditingLayout.MediaWidthUm - item.WidthUm - Math.Max(0, offsetX);
+            var bottom = EditingLayout.MediaHeightUm - item.HeightUm - Math.Max(0, offsetY);
             if (left > right || top > bottom) return;
             var x = Math.Clamp(item.XUm + dx, left, right);
             var y = Math.Clamp(item.YUm + dy, top, bottom);
             if (x == item.XUm && y == item.YUm) return;
-            _history.Push(Layout.Clone());
+            LayoutHistory.Push(EditingLayout);
             item.XUm = x;
             item.YUm = y;
-            Changed();
+            LayoutChanged();
         };
         KeyDown += (_, e) =>
         {
@@ -163,6 +170,7 @@ internal sealed partial class LinuxMainWindow : Window
             commands.Children.Add(Action(Tr("Шаблоны…", "Templates…"), SelectAndApplyTemplate));
             commands.Children.Add(Action(Tr("Сохранить шаблон…", "Save template…"), SaveTemplate));
             commands.Children.Add(Action(Tr("Импорт CSV / Excel…", "Import CSV / Excel…"), ImportData));
+            commands.Children.Add(Action(L10n.T("File.ExportLabelData"), ExportLabelData));
             commands.Children.Add(Action(Tr("Автонумерация…", "Numbering…"), NumberRecords));
             commands.Children.Add(Action(Tr("Предпросмотр…", "Preview…"), ShowPreview, primary: true));
         }
@@ -199,12 +207,16 @@ internal sealed partial class LinuxMainWindow : Window
         if (_project is null) return;
         var pages = Pages;
         _record = Math.Clamp(_record, 0, pages.Count - 1);
-        _elements = GetElements(Layout);
+        _layoutRecord = _record > 0 && !_project.Ribbon.ApplyLayoutToAll
+            ? LabelPrintPages.PrintableRecords(_project.Ribbon).ElementAt(_record - 1)
+            : null;
+        _recordLayout = _layoutRecord is null ? null : LabelPrintPages.ResolveRecordLayout(_project.Ribbon, _layoutRecord);
+        _elements = CanEditLayout ? GetElements(EditingLayout) : [];
         if (_selected >= _elements.Count) _selected = -1;
         Title = _project.Name + (_dirty ? " *" : "") + " — " + Brand;
-        var gap = Units.MmToUm((double)Math.Clamp(_project.Print.MediaGapMm, 0, 100));
+        var gap = Layout.AlternateNotch is null ? Units.MmToUm((double)Math.Clamp(_project.Print.MediaGapMm, 0, 100)) : 0;
         var length = LabelSequence.CalculateFeedLengthUm(Layout, pages.Count, gap);
-        var stockNote = Layout.AlternateNotch is null ? "" : L10n.T("Ribbon.SkipNotchedSections") + "   ·   ";
+        var stockNote = Layout.AlternateNotch is null ? "" : L10n.T("Ribbon.AlternatingNotchedSections") + "   ·   ";
         _status.Text = $"{Tr("Этикеток", "Labels")} {pages.Count}   ·   {Tr("Длина ленты", "Run length")} {Units.FormatMm(length)}   ·   " +
             stockNote + (_dirty ? Tr("Есть несохранённые изменения", "Unsaved changes") : Tr("Сохранено", "Saved"));
 
@@ -232,14 +244,26 @@ internal sealed partial class LinuxMainWindow : Window
         {
             if (position.Value is { } value && value >= 1 && value <= pages.Count && value == decimal.Truncate(value) && (int)value - 1 != _record)
             {
-                _record = (int)value - 1;
-                RefreshProject();
+                SelectRecord((int)value - 1);
             }
         };
         picker.Children.Add(position);
         picker.Children.Add(Action("›", () => NavigateRecord(1), enabled: _record < pages.Count - 1));
         picker.Children.Add(Action(Tr("Добавить этикетку", "Add label"), AddRecord));
         picker.Children.Add(Action(Tr("Удалить этикетку", "Delete label"), DeleteRecord, enabled: _record > 0));
+        var applyToAll = new CheckBox
+        {
+            Content = L10n.T("Ribbon.ApplyLayoutToAll"), IsChecked = _project.Ribbon.ApplyLayoutToAll,
+            Margin = new Thickness(5, 0), VerticalAlignment = VerticalAlignment.Center
+        };
+        applyToAll.IsCheckedChanged += (_, _) => _ = Run(() =>
+        {
+            LabelPrintPages.SetApplyLayoutToAll(_project.Ribbon, applyToAll.IsChecked == true);
+            _selected = -1;
+            Changed();
+            return Task.CompletedTask;
+        });
+        picker.Children.Add(applyToAll);
         editing.Children.Add(picker);
 
         Control view;
@@ -258,7 +282,7 @@ internal sealed partial class LinuxMainWindow : Window
                     Margin = new Thickness(4), Padding = new Thickness(5), Background = index == _record ? Gold : null,
                     Content = new StackPanel { Children = { card, new TextBlock { Text = (index + 1).ToString() } } }
                 };
-                button.Click += (_, _) => _ = Run(() => { _record = index; _strip = false; RefreshProject(); return Task.CompletedTask; });
+                button.Click += (_, _) => _ = Run(() => { _strip = false; SelectRecord(index); return Task.CompletedTask; });
                 button.DetachedFromVisualTree += (_, _) => card.Clear();
                 run.Children.Add(button);
             }
@@ -266,22 +290,23 @@ internal sealed partial class LinuxMainWindow : Window
         }
         else
         {
-            _canvas.SetPage(pages[_record], _project.Print, _record == 0 ? _elements : [], _selected, showMedia: true);
+            _canvas.SetPage(pages[_record], _project.Print, _elements, _selected, showMedia: true);
             view = _canvas;
         }
         Grid.SetRow(view, 1);
         editing.Children.Add(view);
         var editActions = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
-        if (_record == 0)
+        if (CanEditLayout)
         {
             editActions.Children.Add(Action(Tr("Добавить текст", "Add text"), () => AddElement(CellContentType.Text)));
             editActions.Children.Add(Action("QR", () => AddElement(CellContentType.Qr)));
             editActions.Children.Add(Action(Tr("Штрихкод", "Barcode"), () => AddElement(CellContentType.Barcode)));
             editActions.Children.Add(Action(Tr("Изображение", "Image"), AddImage));
-            editActions.Children.Add(Action(Tr("Отменить", "Undo"), () => Undo(false), enabled: _history.CanUndo));
-            editActions.Children.Add(Action(Tr("Повторить", "Redo"), () => Undo(true), enabled: _history.CanRedo));
+            editActions.Children.Add(Action(Tr("Отменить", "Undo"), () => Undo(false), enabled: LayoutHistory.CanUndo));
+            editActions.Children.Add(Action(Tr("Повторить", "Redo"), () => Undo(true), enabled: LayoutHistory.CanRedo));
         }
-        else editActions.Children.Add(Action(Tr("Изменить данные записи…", "Edit record data…"), EditRecord));
+        if (_record > 0)
+            editActions.Children.Add(Action(Tr("Изменить данные записи…", "Edit record data…"), EditRecord));
         Grid.SetRow(editActions, 2);
         editing.Children.Add(editActions);
         editor.Children.Add(editing);
@@ -303,7 +328,7 @@ internal sealed partial class LinuxMainWindow : Window
             Text = Tr("Макет и элементы", "Layout and elements"), FontSize = 18, FontWeight = FontWeight.SemiBold
         });
         content.Children.Add(Action(Tr("Размеры носителя…", "Media size…"), EditMedia));
-        if (_record > 0)
+        if (!CanEditLayout)
         {
             content.Children.Add(new TextBlock { Text = Tr("Положение и формат полей задаются на первой этикетке.", "Set field positions and styles on the first label."), TextWrapping = TextWrapping.Wrap });
             content.Children.Add(Action(Tr("Изменить этикетку", "Edit label data"), EditRecord));
@@ -355,25 +380,25 @@ internal sealed partial class LinuxMainWindow : Window
             pairedField(form, Tr("Ширина, мм", "Width, mm"), width, Tr("Высота, мм", "Height, mm"), height);
             form.Children.Add(Action(Tr("Удалить элемент", "Delete element"), () =>
             {
-                _history.Push(Layout.Clone());
-                Layout.Objects.Remove(element.Object);
+                LayoutHistory.Push(EditingLayout);
+                EditingLayout.Objects.Remove(element.Object);
                 _selected = -1;
-                Changed();
+                LayoutChanged();
                 return Task.CompletedTask;
             }));
         }
         else form.Children.Add(Action(Tr("Перемещать свободно", "Detach from cell"), () =>
         {
-            _history.Push(Layout.Clone());
-            var binding = LabelPrintPages.GetBindings(Layout).IndexOf(element.Content);
-            Layout.Objects.Add(new LabelObject
+            LayoutHistory.Push(EditingLayout);
+            var binding = LabelPrintPages.GetBindings(EditingLayout).IndexOf(element.Content);
+            EditingLayout.Objects.Add(new LabelObject
             {
                 XUm = element.X, YUm = element.Y, WidthUm = element.Width, HeightUm = element.Height,
                 CsvColumn = binding < 0 ? null : binding, Content = element.Content.Clone()
             });
-            Layout.Rows[element.Row].Cells[element.Column].Content = new CellContent();
-            _selected = GetElements(Layout).Count - 1;
-            Changed();
+            EditingLayout.Rows[element.Row].Cells[element.Column].Content = new CellContent();
+            _selected = GetElements(EditingLayout).Count - 1;
+            LayoutChanged();
             return Task.CompletedTask;
         }));
         form.Children.Add(Action(Tr("Применить", "Apply"), () =>
@@ -387,10 +412,10 @@ internal sealed partial class LinuxMainWindow : Window
                 var printX = newX + Units.MmToUm(_project!.Print.OffsetXMm);
                 var printY = newY + Units.MmToUm(_project.Print.OffsetYMm);
                 if (newWidth <= 0 || newHeight <= 0 || printX < 0 || printY < 0 ||
-                    printX + newWidth > Layout.MediaWidthUm || printY + newHeight > Layout.MediaHeightUm)
+                    printX + newWidth > EditingLayout.MediaWidthUm || printY + newHeight > EditingLayout.MediaHeightUm)
                     throw new InvalidDataException(Tr("Элемент выходит за размеры носителя.", "The element exceeds the media bounds."));
             }
-            _history.Push(Layout.Clone());
+            LayoutHistory.Push(EditingLayout);
             var input = data.Text ?? "";
             if (element.Content.Type == CellContentType.Barcode)
             {
@@ -411,7 +436,7 @@ internal sealed partial class LinuxMainWindow : Window
             }
             element.Content.InvertColors = invert.IsChecked == true;
             if (element.Object is { } obj) { obj.XUm = newX; obj.YUm = newY; obj.WidthUm = newWidth; obj.HeightUm = newHeight; }
-            Changed();
+            LayoutChanged();
             return Task.CompletedTask;
         }, primary: true));
 
@@ -455,7 +480,7 @@ internal sealed partial class LinuxMainWindow : Window
 
     private void SelectElement(int index)
     {
-        if (_record != 0) return;
+        if (!CanEditLayout) return;
         _selected = index >= 0 && index < _elements.Count ? index : -1;
         _canvas.Select(_selected);
         RefreshInspector();
@@ -463,26 +488,33 @@ internal sealed partial class LinuxMainWindow : Window
 
     private Task NavigateRecord(int direction)
     {
-        _record += direction;
-        RefreshProject();
+        SelectRecord(_record + direction);
         return Task.CompletedTask;
+    }
+
+    private void SelectRecord(int record)
+    {
+        _record = record;
+        _selected = -1;
+        RefreshProject();
     }
 
     private Task AddElement(CellContentType type) => AddElement(new CellContent { Type = type, AutoFitText = type == CellContentType.Text });
 
     private Task AddElement(CellContent content)
     {
-        var width = Math.Min(25_000, Layout.MediaWidthUm);
-        var height = Math.Min(content.Type is CellContentType.Qr or CellContentType.Image ? 20_000 : 8_000, Layout.MediaHeightUm);
-        _history.Push(Layout.Clone());
-        Layout.Objects.Add(new LabelObject
+        var layout = EditingLayout;
+        var width = Math.Min(25_000, layout.MediaWidthUm);
+        var height = Math.Min(content.Type is CellContentType.Qr or CellContentType.Image ? 20_000 : 8_000, layout.MediaHeightUm);
+        LayoutHistory.Push(layout);
+        layout.Objects.Add(new LabelObject
         {
-            XUm = (Layout.MediaWidthUm - width) / 2,
-            YUm = (Layout.MediaHeightUm - height) / 2,
+            XUm = (layout.MediaWidthUm - width) / 2,
+            YUm = (layout.MediaHeightUm - height) / 2,
             WidthUm = width, HeightUm = height, Content = content
         });
-        _selected = GetElements(Layout).Count - 1;
-        Changed();
+        _selected = GetElements(layout).Count - 1;
+        LayoutChanged();
         return Task.CompletedTask;
     }
 
@@ -506,11 +538,13 @@ internal sealed partial class LinuxMainWindow : Window
 
     private Task Undo(bool redo)
     {
-        var layout = Layout;
-        if (redo ? _history.Redo(ref layout) : _history.Undo(ref layout))
+        var layout = EditingLayout;
+        var history = LayoutHistory;
+        if (redo ? history.Redo(ref layout) : history.Undo(ref layout))
         {
-            _project!.Ribbon.Layout = layout;
-            Changed();
+            if (_layoutRecord is null) _project!.Ribbon.Layout = layout;
+            else _recordLayout = layout;
+            LayoutChanged();
         }
         return Task.CompletedTask;
     }
@@ -546,7 +580,7 @@ internal sealed partial class LinuxMainWindow : Window
             }
         }
         using var raster = LabelRaster.Render(candidate, _project!.Print, 96);
-        _history.Push(old.Clone());
+        _history.Push(old);
         _project.Ribbon.Layout = candidate;
         Changed();
     }
@@ -555,6 +589,12 @@ internal sealed partial class LinuxMainWindow : Window
     {
         _dirty = true;
         RefreshProject();
+    }
+
+    private void LayoutChanged()
+    {
+        if (_layoutRecord is { } record) LabelPrintPages.StoreRecordLayout(record, EditingLayout);
+        Changed();
     }
 
     private async Task NewProject()

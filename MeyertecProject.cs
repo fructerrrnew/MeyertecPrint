@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MeyertecPrint;
 
@@ -14,7 +15,7 @@ namespace MeyertecPrint;
 public class ProjectFile
 {
     public const string FileExtension = ".mprj";
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -46,6 +47,8 @@ public class PrintSettings
     public string? UsbDevice { get; set; }
     public int Copies { get; set; } = 1;
     public decimal MediaGapMm { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AlignToNotch { get; set; }
     /// <summary>Смещение всего задания по X, мм (может быть отрицательным).</summary>
     public double OffsetXMm { get; set; }
 
@@ -75,6 +78,9 @@ public class RibbonData
     public LabelLayout? Layout { get; set; }
 
     public List<LabelItem> Labels { get; set; } = new();
+    public bool ApplyLayoutToAll { get; set; } = true;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LabelLayout? IndividualLayoutBase { get; set; }
 
     /// <summary>
     /// Возвращает макет; для старых проектов (.mprj без Layout)
@@ -133,6 +139,8 @@ public class LabelItem
 
     /// <summary>Дополнительный экземпляр макета без подстановки данных.</summary>
     public bool UseLayout { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LabelLayout? Layout { get; set; }
 }
 
 /// <summary>Чтение и запись файлов проекта.</summary>
@@ -192,6 +200,9 @@ public static class ProjectFileIo
     private static int RequiredVersion(ProjectFile project)
     {
         var layout = project.Ribbon?.Layout;
+        if (project.Print?.AlignToNotch == true || project.Ribbon is { } ribbon &&
+            (!ribbon.ApplyLayoutToAll || ribbon.IndividualLayoutBase is not null || ribbon.Labels.Any(label => label.Layout is not null)))
+            return 6;
         if (layout?.AlternateNotch is not null) return 5;
         if (project.TemplateId is not null || project.TemplateVersion is not null ||
             project.Print is { } print && (print.PrintBackend != "driver" || print.ConnectionKind == "serial" ||

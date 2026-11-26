@@ -152,23 +152,24 @@ try
     terminal.Ribbon.Labels[0].Fields["C0"] = "X2";
     terminal.Ribbon.Labels[1].Fields["C0"] = "X3";
     var printPages = LabelPrintPages.Create(terminalLayout, terminal.Ribbon.Labels, true);
-    Check("All records keep their order on full rectangular sections",
-        printPages.All(page => page.ActiveNotch is null) &&
+    Check("All records keep their order on full and notched sections",
+        printPages[0].ActiveNotch is null && printPages[1].ActiveNotch == notch && printPages[2].ActiveNotch is null &&
         printPages.Select(page => page.Objects[0].Content.Text).SequenceEqual(["X1", "X2", "X3"]));
-    Check("Each printable section uses two pitches, including the trailing notch",
-        LabelSequence.CalculateFeedLengthUm(terminalLayout, 3) == 60_000 &&
-        LabelSequence.CalculateFeedLengthUm(terminalLayout, 1) == 20_000 &&
+    Check("Printing consumes one pitch per section",
+        LabelSequence.CalculateFeedLengthUm(terminalLayout, 3) == 30_000 &&
+        LabelSequence.CalculateFeedLengthUm(terminalLayout, 1) == 10_000 &&
         LabelSequence.CalculateFeedLengthUm(layout, 3, 2_000) == 94_000);
-    Check("Only patterned stock can start with one blank section",
-        LabelPrintPages.LeadingBlankSections(terminalLayout, true) == 1 &&
-        LabelPrintPages.LeadingBlankSections(terminalLayout, false) == 0 &&
-        LabelPrintPages.LeadingBlankSections(layout, true) == 0);
+    Check("A notched start switches the physical shapes without consuming a label",
+        LabelPrintPages.AtFeedPosition(printPages[0], 0, startOnNotchedSection: true).ActiveNotch == notch &&
+        LabelPrintPages.AtFeedPosition(printPages[1], 1, startOnNotchedSection: true).ActiveNotch is null &&
+        LabelPrintPages.AtFeedPosition(layout, 0, startOnNotchedSection: true).ActiveNotch is null);
     var stockPreview = LabelPrintPages.CreateStockPreview(terminalLayout);
     var shifted = new PrintSettings { OffsetXMm = 0.25, OffsetYMm = 0.25 };
     var notchedRaster = LabelRasterPlan.Create(stockPreview[1], shifted, 300, 300);
-    Check("The skipped section contains no artwork and keeps its physical notch in preview",
+    Check("Preview shows the physical notch and the artwork on the same section",
         stockPreview[0].ActiveNotch is null && stockPreview[1].ActiveNotch == notch && stockPreview[2].ActiveNotch is null &&
-        notchedRaster is { Width: 591, Height: 118, Elements.Count: 0, Cutout: { X: 531, Y: 30, Right: 591, Bottom: 89 } });
+        notchedRaster is { Width: 591, Height: 118, Cutout: { X: 531, Y: 30, Right: 591, Bottom: 89 } } &&
+        notchedRaster.Elements.Any(item => item.Content.Text == "X1"));
     var adjustedPitch = terminalLayout.Clone();
     GeometryOperations.ResizeNotchedStockPitch(adjustedPitch, 6_000);
     Check("Measured feed pitch scales content and notch in the feed direction only",
@@ -185,6 +186,35 @@ try
     Check("Project and exported template retain notch geometry",
         restoredTerminal.Version == 5 && restoredTerminal.Ribbon.GetLayout().AlternateNotch == notch &&
         TemplateLibrary.LoadFile(templatePath) is { SchemaVersion: 2, Layout.AlternateNotch: { DepthUm: 5_000 } });
+    LabelPrintPages.SetApplyLayoutToAll(terminal.Ribbon, false);
+    terminalLayout.Objects[0].Content.FontSizePt = 18;
+    var individual = LabelPrintPages.ResolveRecordLayout(terminal.Ribbon, terminal.Ribbon.Labels[0]);
+    individual.Objects[0].Content.FontSizePt = 12;
+    individual.Objects[0].Content.Text = "0002\nКлемма";
+    LabelPrintPages.StoreRecordLayout(terminal.Ribbon.Labels[0], individual);
+    var independentPages = LabelPrintPages.Create(terminal.Ribbon);
+    Check("Turning off shared layout separates first, custom, and inherited label formatting",
+        independentPages[0].Objects[0].Content.FontSizePt == 18 &&
+        independentPages[1].Objects[0].Content is { FontSizePt: 12, Text: "0002\nКлемма" } &&
+        independentPages[2].Objects[0].Content is { FontSizePt: null, Text: "X3" });
+    LabelPrintPages.SetApplyLayoutToAll(terminal.Ribbon, true);
+    var sharedPages = LabelPrintPages.Create(terminal.Ribbon);
+    Check("Shared layout applies formatting while preserving each label's data",
+        sharedPages[1].Objects[0].Content is { FontSizePt: 18, Text: "0002\nКлемма" });
+    LabelPrintPages.SetApplyLayoutToAll(terminal.Ribbon, false);
+    ProjectFileIo.Save(terminal, terminalPath);
+    var independentProject = ProjectFileIo.Load(terminalPath);
+    var exportedPages = LabelPrintPages.Create(independentProject.Ribbon);
+    Check("Individual layout settings and data survive saving and reopening",
+        independentProject.Version == 6 && !independentProject.Ribbon.ApplyLayoutToAll &&
+        exportedPages[1].Objects[0].Content is { FontSizePt: 12, Text: "0002\nКлемма" });
+    foreach (var extension in new[] { ".csv", ".xlsx" })
+    {
+        var exportPath = Path.Combine(tmp, "labels" + extension);
+        LabelDataExport.Write(exportPath, exportedPages);
+        Check($"{extension} exports all records, preserving text and zeroes",
+            SpreadsheetReader.ReadFile(exportPath).Select(row => row.Single()).SequenceEqual(["C1", "X1", "0002\nКлемма", "X3"]));
+    }
     var invalidNotch = terminalLayout.Clone();
     invalidNotch.AlternateNotch = new MediaNotch(5_000, 5_000, 0);
     Check("Invalid notch geometry and lossy WSTX export are rejected",

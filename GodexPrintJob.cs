@@ -68,60 +68,61 @@ public static class GodexPrintJob
             if (pages.Count == 0 || settings.Copies is < 1 or > 500)
                 throw new InvalidDataException(L10n.T("Godex.JobSize"));
 
+            var first = pages[0];
+            var canGroup = settings.ConnectionKind != "serial" && first.AlternateNotch is not null &&
+                pages.All(page => page.AlternateNotch is not null &&
+                page.MediaWidthUm == first.MediaWidthUm && page.MediaHeightUm == first.MediaHeightUm);
+            if (settings.AlignToNotch && (!canGroup || first.MediaHeightUm > MaxPrintLengthUm / 2 ||
+                pages.Any(page => page.AlternateNotch != first.AlternateNotch)))
+                throw new InvalidDataException(L10n.T("Print.NotchAlignmentUnsupported"));
+            var printNotchFirst = startOnNotchedSection && !settings.AlignToNotch;
+
             // Validate every selected record before opening the destination. Repeat rendering on demand
             // so a large Excel job does not hold a bitmap or encoded page per record in memory.
-            foreach (var page in pages)
+            for (var index = 0; index < pages.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var page = pages[index];
                 ValidateMediaGap(page, settings);
-                _ = RenderPage(page, settings, render);
+                _ = RenderPage(LabelPrintPages.AtFeedPosition(page, index, printNotchFirst), settings, render);
+                if (page.AlternateNotch is not null && settings.Copies > 1 && pages.Count % 2 != 0)
+                    _ = RenderPage(LabelPrintPages.AtFeedPosition(page, (long)index + pages.Count, printNotchFirst),
+                        settings, render);
             }
 
+            var registration = settings.AlignToNotch ? EncodeNotchRegistration(first, settings) : null;
             using var target = await OpenTargetAsync(settings, cancellationToken).ConfigureAwait(false);
-            var first = pages[0];
-            var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(first);
-            var leadingSections = LabelPrintPages.LeadingBlankSections(first, startOnNotchedSection);
+            if (registration is not null)
+                await target.WritePageAsync(registration, cancellationToken).ConfigureAwait(false);
+
             var total = (long)pages.Count * settings.Copies;
-            if (settings.ConnectionKind != "serial" && sectionsPerLabel > 1 &&
-                pages.All(page => page.AlternateNotch is not null &&
-                page.MediaWidthUm == first.MediaWidthUm && page.MediaHeightUm == first.MediaHeightUm))
+            if (canGroup)
             {
                 // One format per strip avoids a printer stop and restart at each perforation.
-                var sectionsPerBlock = MaxPrintLengthUm / first.MediaHeightUm;
-                var totalSections = leadingSections + total * sectionsPerLabel;
-                for (long section = 0; section < totalSections;)
+                for (long section = 0; section < total;)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var count = (int)Math.Min(sectionsPerBlock, totalSections - section);
+                    var prefix = section == 0 ? RegistrationPrefixUm(first, settings) : 0;
+                    var sectionsPerBlock = (MaxPrintLengthUm - prefix) / first.MediaHeightUm;
+                    var count = (int)Math.Min(sectionsPerBlock, total - section);
                     var command = EncodeContinuousBlock(pages, settings, render, section, count, cancellationToken,
                         startOnNotchedSection);
                     await target.WritePageAsync(command, cancellationToken).ConfigureAwait(false);
                     section += count;
-                    progress?.Report((Math.Max(0, section - leadingSections) / sectionsPerLabel, total));
+                    progress?.Report((section, total));
                 }
                 return;
             }
 
-            if (leadingSections > 0)
-            {
-                var blank = GodexRaster.Blank(ToDots(first.MediaWidthUm), ToDots(first.MediaHeightUm));
-                await target.WritePageAsync(EncodePage(first, settings, blank), cancellationToken).ConfigureAwait(false);
-            }
-
             long done = 0;
             for (var copy = 0; copy < settings.Copies; copy++)
-            foreach (var page in pages)
+            foreach (var source in pages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var page = LabelPrintPages.AtFeedPosition(source, done, printNotchFirst);
                 var raster = RenderPage(page, settings, render);
                 var command = EncodePage(page, settings, raster);
                 await target.WritePageAsync(command, cancellationToken).ConfigureAwait(false);
-                if (LabelPrintPages.PhysicalSectionsPerLabel(page) > 1)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var blank = GodexRaster.Blank(raster.Width, raster.Height);
-                    await target.WritePageAsync(EncodePage(page, settings, blank), cancellationToken).ConfigureAwait(false);
-                }
                 progress?.Report((++done, total));
             }
         }, cancellationToken);
@@ -132,22 +133,38 @@ public static class GodexPrintJob
         CancellationToken cancellationToken, bool startOnNotchedSection = false)
     {
         var first = pages[0];
-        var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(first);
-        var leadingSections = LabelPrintPages.LeadingBlankSections(first, startOnNotchedSection);
-        var length = first.MediaHeightUm * count;
+        var prefix = firstSection == 0 ? RegistrationPrefixUm(first, settings) : 0;
+        var length = prefix + first.MediaHeightUm * count;
+        var printNotchFirst = startOnNotchedSection && !settings.AlignToNotch;
         var raster = GodexRaster.Blank(ToDots(first.MediaWidthUm), ToDots(length));
         for (var section = 0; section < count; section++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var index = firstSection + section - leadingSections;
-            if (index < 0 || index % sectionsPerLabel != 0) continue;
-            var page = pages[(int)(index / sectionsPerLabel % pages.Count)];
+            var index = firstSection + section;
+            var page = LabelPrintPages.AtFeedPosition(pages[(int)(index % pages.Count)], index, printNotchFirst);
             var label = RenderPage(page, settings, render);
-            var start = ToDots(section * first.MediaHeightUm);
-            var end = ToDots((section + 1) * first.MediaHeightUm);
+            var start = ToDots(prefix + section * first.MediaHeightUm);
+            var end = ToDots(prefix + (section + 1) * first.MediaHeightUm);
             CopySection(label, raster, start, end);
         }
         return EncodeRaster(first.MediaWidthUm, length, settings, raster, inlinePattern: true);
+    }
+
+    private static byte[] EncodeNotchRegistration(LabelLayout page, PrintSettings settings)
+    {
+        var notch = page.AlternateNotch!;
+        var length = 2 * page.MediaHeightUm - notch.HeightUm;
+        var raster = GodexRaster.Blank(ToDots(page.MediaWidthUm), ToDots(length));
+        // Use gap media for one blank cycle, then resume continuous feed for the print artwork.
+        return EncodeRaster(page.MediaWidthUm, length, settings, raster, inlinePattern: true,
+            registrationGapMm: notch.HeightUm / 1_000m);
+    }
+
+    private static long RegistrationPrefixUm(LabelLayout page, PrintSettings settings)
+    {
+        if (!settings.AlignToNotch || page.AlternateNotch is not { } notch) return 0;
+        var trailingEdge = notch.CenterYUm + (notch.HeightUm - notch.HeightUm / 2);
+        return page.MediaHeightUm - trailingEdge;
     }
 
     private static int ToDots(long microns) => (int)Math.Round(microns * Dpi / 25_400d);
@@ -257,13 +274,15 @@ public static class GodexPrintJob
         return EncodeRaster(page.MediaWidthUm, page.MediaHeightUm, settings, raster, inlinePattern: false);
     }
 
-    private static byte[] EncodeRaster(long widthUm, long lengthUm, PrintSettings settings, GodexRaster raster, bool inlinePattern)
+    private static byte[] EncodeRaster(long widthUm, long lengthUm, PrintSettings settings, GodexRaster raster, bool inlinePattern,
+        decimal? registrationGapMm = null)
     {
         var width = Math.Min(Units.UmToMm(widthUm), HeadWidthMm);
         var length = Units.UmToMm(lengthUm);
-        var media = settings.MediaGapMm == 0
+        var gap = registrationGapMm ?? settings.MediaGapMm;
+        var media = gap == 0
             ? FormattableString.Invariant($"^Q{length:0.###},0,0\r\n")
-            : FormattableString.Invariant($"^Q{length:0.###},{settings.MediaGapMm:0.###}\r\n");
+            : FormattableString.Invariant($"^Q{length:0.###},{gap:0.###}\r\n");
         var setup = new StringBuilder(media)
             .Append(FormattableString.Invariant($"^W{width:0.###}\r\n^P1\r\n^C1\r\n^R0\r\n"));
         if (settings.Temperature is int darkness)

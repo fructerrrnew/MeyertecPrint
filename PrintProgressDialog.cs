@@ -132,22 +132,7 @@ public sealed class PrintProgressDialog : BrandForm
         document.PrinterSettings.PrinterName = _settings.PrinterName ?? string.Empty;
         if (!document.PrinterSettings.IsValid) throw new InvalidPrinterException(document.PrinterSettings);
 
-        var paper = _pages[_start];
-        var sectionsPerLabel = LabelPrintPages.PhysicalSectionsPerLabel(paper);
-        var leadingSections = LabelPrintPages.LeadingBlankSections(paper, _startOnNotchedSection);
-        var leadingBlankUm = checked(paper.MediaHeightUm * leadingSections);
-        if (sectionsPerLabel > 1)
-        {
-            // Include the blank pitches in a driver page with artwork to prevent blank-page suppression.
-            var combinedHeight = checked(paper.MediaHeightUm * sectionsPerLabel);
-            var maximumLength = _plugin?.MaxPrintLengthMm ?? 762;
-            if (Units.UmToMm(checked(combinedHeight + leadingBlankUm)) > maximumLength)
-                throw new InvalidDataException(string.Format(L10n.T("Print.DriverStockPitchTooLong"),
-                    maximumLength / (sectionsPerLabel + leadingSections)));
-            paper = paper.Clone();
-            paper.MediaHeightUm = combinedHeight;
-        }
-        MainForm.SetLabelPaper(document, paper);
+        MainForm.SetLabelPaper(document, _pages[_start]);
         document.PrinterSettings.Copies = 1;
         var resolution = document.DefaultPageSettings.PrinterResolution;
         var dpiX = resolution.X >= 72 ? resolution.X : _plugin?.ResolutionDpi ?? 300;
@@ -157,7 +142,7 @@ public sealed class PrintProgressDialog : BrandForm
             token.ThrowIfCancellationRequested();
             try
             {
-                var page = _pages[_start + i];
+                var page = LabelPrintPages.AtFeedPosition(_pages[_start + i], i, _startOnNotchedSection);
                 GodexPrintJob.ValidateMediaGap(page, _settings);
                 if (_plugin is not null) LabelPrintLayout.EnsurePrintWidth(page, _plugin.MaxPrintWidthMm);
                 using var bitmap = LabelPrintRenderer.Render(page, _settings, dpiX, dpiY, validateForPrint: true);
@@ -168,23 +153,13 @@ public sealed class PrintProgressDialog : BrandForm
         }
         token.ThrowIfCancellationRequested();
         long index = 0, total = (long)_count * _settings.Copies;
-        if (leadingSections > 0)
-        {
-            var firstPageSettings = (PageSettings)document.DefaultPageSettings.Clone();
-            paper.MediaHeightUm = checked(paper.MediaHeightUm + leadingBlankUm);
-            MainForm.SetLabelPaper(document, paper, firstPageSettings);
-            document.QueryPageSettings += (_, e) =>
-                e.PageSettings = index == 0 ? firstPageSettings : document.DefaultPageSettings;
-        }
         document.PrintPage += (_, e) =>
         {
             if (token.IsCancellationRequested) { e.Cancel = true; e.HasMorePages = false; return; }
             var graphics = e.Graphics ?? throw new InvalidDataException(L10n.T("Print.InvalidGraphics"));
-            var page = _pages[_start + (int)(index % _count)];
+            var page = LabelPrintPages.AtFeedPosition(_pages[_start + (int)(index % _count)], index, _startOnNotchedSection);
             using var bitmap = LabelPrintRenderer.Render(page, _settings, graphics.DpiX, graphics.DpiY, validateForPrint: true);
-            if (sectionsPerLabel > 1) graphics.Clear(Color.White);
-            var feedOffsetUm = index == 0 ? leadingBlankUm : 0;
-            LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY, feedOffsetUm);
+            LabelPrintRenderer.DrawToDevice(graphics, bitmap, e.PageSettings.HardMarginX, e.PageSettings.HardMarginY);
             index++;
             Report("Print.SpoolProgress", index, total);
             e.HasMorePages = index < total;
