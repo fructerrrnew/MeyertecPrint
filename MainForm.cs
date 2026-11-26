@@ -748,7 +748,7 @@ public partial class MainForm : BrandForm
         var plugin = PrinterPlugins.All.FirstOrDefault(x => x.Name == _project.PrinterModel);
         using var dialog = new PageSettingsDialog(BaseLayout, plugin);
         if (dialog.ShowDialog(this) == DialogResult.OK)
-            ApplyProjectPrintSettings(dialog.MediaWidthUm, dialog.MediaHeightUm);
+            ApplyProjectPrintSettings(dialog.MediaWidthUm, dialog.MediaHeightUm, dialog.NotchHeightUm);
     }
 
     private void PrintSettings() => ShowPrintSetup(false);
@@ -770,7 +770,7 @@ public partial class MainForm : BrandForm
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             _project.Print = dialog.Result;
             _project.PrinterModel = dialog.PrinterModel;
-            ApplyProjectPrintSettings(dialog.MediaWidthUm, dialog.MediaHeightUm);
+            ApplyProjectPrintSettings(dialog.MediaWidthUm, dialog.MediaHeightUm, dialog.NotchHeightUm);
             if (!forPrint) return;
 
             var pages = LabelPrintPages.Create(_project.Ribbon, dialog.IncludeImported);
@@ -793,13 +793,13 @@ public partial class MainForm : BrandForm
         }
     }
 
-    private void ApplyProjectPrintSettings(long mediaWidthUm, long mediaHeightUm)
+    private void ApplyProjectPrintSettings(long mediaWidthUm, long mediaHeightUm, long? notchHeightUm)
     {
         var record = _editingRecord;
         if (record is not null) LoadLabelLayout(null);
         try
         {
-            _editor.ApplyPrintSettings(_project!.Print, mediaWidthUm, mediaHeightUm);
+            _editor.ApplyPrintSettings(_project!.Print, mediaWidthUm, mediaHeightUm, notchHeightUm);
         }
         finally
         {

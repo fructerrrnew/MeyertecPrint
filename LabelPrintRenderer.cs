@@ -23,7 +23,7 @@ public static class LabelPrintRenderer
             foreach (var element in plan.Elements)
                 DrawContent(g, element.Content, element.Bounds, dpiY, validateForPrint);
             if (plan.Cutout is { Width: > 0, Height: > 0 } cutout)
-                DrawCutout(g, cutout, dpiX / dpiY, showMedia);
+                DrawCutout(g, cutout, dpiX / dpiY, layout.ActiveNotch?.Side == MediaNotchSide.Left, showMedia);
             return bitmap;
         }
         catch
@@ -33,16 +33,18 @@ public static class LabelPrintRenderer
         }
     }
 
-    private static void DrawCutout(Graphics graphics, Rectangle bounds, float horizontalScale, bool showMedia)
+    private static void DrawCutout(Graphics graphics, Rectangle bounds, float horizontalScale, bool opensLeft, bool showMedia)
     {
         var curveHeight = Math.Min(2f * bounds.Width / horizontalScale, bounds.Height);
         var curveWidth = curveHeight * horizontalScale;
         var top = bounds.Top + (bounds.Height - curveHeight) / 2;
-        var middle = bounds.Left + curveWidth / 2;
+        var curveLeft = opensLeft ? bounds.Right - curveWidth : bounds.Left;
+        var middle = curveLeft + curveWidth / 2;
+        var openEdge = opensLeft ? bounds.Left : bounds.Right;
         using var path = new GraphicsPath();
-        path.AddArc(bounds.Left, top, curveWidth, curveHeight, 90, 180);
-        path.AddLine(middle, top, bounds.Right, top);
-        path.AddLine(bounds.Right, top, bounds.Right, top + curveHeight);
+        path.AddArc(curveLeft, top, curveWidth, curveHeight, 90, opensLeft ? -180 : 180);
+        path.AddLine(middle, top, openEdge, top);
+        path.AddLine(openEdge, top, openEdge, top + curveHeight);
         path.CloseFigure();
 
         using var fill = new SolidBrush(!showMedia ? Color.White :

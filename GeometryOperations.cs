@@ -43,12 +43,26 @@ public static class GeometryOperations
         }
     }
 
-    /// <summary>Changes the feed pitch of perforated stock while retaining the artwork's relative position.</summary>
-    public static void ResizeNotchedStockPitch(LabelLayout layout, long newHeightUm)
+    public static void ResizeNotch(LabelLayout layout, long notchHeightUm)
+    {
+        if (layout.AlternateNotch is not { } notch)
+            throw new InvalidDataException(L10n.T("Print.InvalidNotch"));
+        var resized = notch with { HeightUm = notchHeightUm };
+        if (!resized.Fits(layout.MediaWidthUm, layout.MediaHeightUm))
+            throw new InvalidDataException(L10n.T("Print.InvalidNotch"));
+        layout.AlternateNotch = resized;
+    }
+
+    /// <summary>Changes the feed pitch while retaining the artwork's relative position.</summary>
+    public static void ResizeNotchedStockPitch(LabelLayout layout, long newHeightUm, long? notchHeightUm = null)
     {
         if (layout.AlternateNotch is not { } notch || layout.MediaHeightUm <= 0 || newHeightUm is < 4_000 or > 762_000)
             throw new InvalidDataException(L10n.T("Print.InvalidMediaSize"));
-        if (newHeightUm == layout.MediaHeightUm) return;
+        if (newHeightUm == layout.MediaHeightUm)
+        {
+            if (notchHeightUm is long measuredHeight) ResizeNotch(layout, measuredHeight);
+            return;
+        }
 
         long ScaleY(long value) => checked((long)Math.Round(value * (double)newHeightUm / layout.MediaHeightUm));
         var resized = layout.Clone();
@@ -70,11 +84,16 @@ public static class GeometryOperations
             item.HeightUm = bottom - item.YUm;
         }
 
-        var oldTop = notch.CenterYUm - notch.HeightUm / 2;
-        var newTop = ScaleY(oldTop);
-        var notchHeight = ScaleY(oldTop + notch.HeightUm) - newTop;
-        resized.AlternateNotch = new MediaNotch(notch.DepthUm, notchHeight, newTop + notchHeight / 2);
         resized.MediaHeightUm = newHeightUm;
+        if (notchHeightUm is long absoluteHeight)
+            resized.AlternateNotch = notch with { HeightUm = absoluteHeight, CenterYUm = ScaleY(notch.CenterYUm) };
+        else
+        {
+            var oldTop = notch.CenterYUm - notch.HeightUm / 2;
+            var newTop = ScaleY(oldTop);
+            var height = ScaleY(oldTop + notch.HeightUm) - newTop;
+            resized.AlternateNotch = notch with { HeightUm = height, CenterYUm = newTop + height / 2 };
+        }
         _ = LabelPrintLayout.Create(resized);
         if (geometry.HeightUm <= 0 || resized.Objects.Any(item => item.HeightUm <= 0))
             throw new InvalidDataException(L10n.T("Geometry.TooSmall"));

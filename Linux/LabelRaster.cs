@@ -18,7 +18,7 @@ internal static class LabelRaster
             foreach (var (content, bounds) in plan.Elements)
                 DrawElement(canvas, content, bounds, dpi, validateForPrint);
             if (plan.Cutout is { Width: > 0, Height: > 0 } cutout)
-                DrawCutout(canvas, cutout, showMedia);
+                DrawCutout(canvas, cutout, layout.ActiveNotch?.Side == MediaNotchSide.Left, showMedia);
             return bitmap;
         }
         catch
@@ -28,14 +28,16 @@ internal static class LabelRaster
         }
     }
 
-    private static void DrawCutout(SKCanvas canvas, Rectangle bounds, bool showMedia)
+    private static void DrawCutout(SKCanvas canvas, Rectangle bounds, bool opensLeft, bool showMedia)
     {
         var diameter = Math.Min(2f * bounds.Width, bounds.Height);
         var top = bounds.Top + (bounds.Height - diameter) / 2;
+        var curveLeft = opensLeft ? bounds.Right - diameter : bounds.Left;
+        var openEdge = opensLeft ? bounds.Left : bounds.Right;
         using var path = new SKPath();
-        path.ArcTo(new SKRect(bounds.Left, top, bounds.Left + diameter, top + diameter), 90, 180, true);
-        path.LineTo(bounds.Right, top);
-        path.LineTo(bounds.Right, top + diameter);
+        path.ArcTo(new SKRect(curveLeft, top, curveLeft + diameter, top + diameter), 90, opensLeft ? -180 : 180, true);
+        path.LineTo(openEdge, top);
+        path.LineTo(openEdge, top + diameter);
         path.Close();
 
         using var fill = new SKPaint { Color = showMedia ? new SKColor(225, 232, 236) : SKColors.White };

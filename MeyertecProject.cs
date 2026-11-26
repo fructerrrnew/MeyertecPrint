@@ -15,7 +15,7 @@ namespace MeyertecPrint;
 public class ProjectFile
 {
     public const string FileExtension = ".mprj";
-    public const int CurrentVersion = 6;
+    public const int CurrentVersion = 7;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -174,7 +174,7 @@ public static class ProjectFileIo
             (layout.MediaWidthUm <= 0 || layout.MediaWidthUm > 300_000 || layout.MediaHeightUm <= 0 || layout.MediaHeightUm > 762_000))
             throw new InvalidDataException(L10n.T("Print.InvalidMediaSize"));
         if (project.Ribbon?.Layout is { AlternateNotch: { } notch } stock &&
-            (project.Version < 5 || !notch.Fits(stock.MediaWidthUm, stock.MediaHeightUm)))
+            (project.Version < (notch.Side == MediaNotchSide.Left ? 7 : 5) || !notch.Fits(stock.MediaWidthUm, stock.MediaHeightUm)))
             throw new InvalidDataException(L10n.T("Print.InvalidNotch"));
         return project;
     }
@@ -200,6 +200,7 @@ public static class ProjectFileIo
     private static int RequiredVersion(ProjectFile project)
     {
         var layout = project.Ribbon?.Layout;
+        if (layout?.AlternateNotch is { Side: MediaNotchSide.Left }) return 7;
         if (project.Print?.AlignToNotch == true || project.Ribbon is { } ribbon &&
             (!ribbon.ApplyLayoutToAll || ribbon.IndividualLayoutBase is not null || ribbon.Labels.Any(label => label.Layout is not null)))
             return 6;

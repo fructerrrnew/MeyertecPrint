@@ -31,6 +31,7 @@ internal sealed partial class LinuxMainWindow
         var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
         var use = new Button { Content = Tr("Выбрать", "Use template"), Background = Gold, Foreground = Ink, Margin = new Thickness(4) };
         var import = new Button { Content = Tr("Импорт шаблона…", "Import template…"), Margin = new Thickness(4) };
+        var edit = new Button { Content = L10n.T("Template.Edit"), Margin = new Thickness(4) };
         var cancel = new Button { Content = Tr("Закрыть", "Close"), Margin = new Thickness(4) };
         body.Children.Add(list);
         body.Children.Add(details);
@@ -38,6 +39,7 @@ internal sealed partial class LinuxMainWindow
         body.Children.Add(canvas);
         body.Children.Add(strip);
         buttons.Children.Add(import);
+        buttons.Children.Add(edit);
         buttons.Children.Add(use);
         buttons.Children.Add(cancel);
         body.Children.Add(buttons);
@@ -50,7 +52,7 @@ internal sealed partial class LinuxMainWindow
             canvas.Clear();
             foreach (var section in sections) section.Clear();
             var selected = list.SelectedIndex;
-            use.IsEnabled = selected >= 0 && selected < templates.Count;
+            edit.IsEnabled = use.IsEnabled = selected >= 0 && selected < templates.Count;
             render.IsVisible = canvas.IsVisible = strip.IsVisible = false;
             if (!use.IsEnabled)
             {
@@ -103,6 +105,23 @@ internal sealed partial class LinuxMainWindow
                 dialog.Close(templates[list.SelectedIndex]);
         };
         cancel.Click += (_, _) => dialog.Close();
+        edit.Click += async (_, _) =>
+        {
+            var index = list.SelectedIndex;
+            if (index < 0 || index >= templates.Count) return;
+            var selected = templates[index];
+            edit.IsEnabled = false;
+            try
+            {
+                if (await EditTemplateDetails(selected, dialog) is { } revision)
+                {
+                    if (_lastSavedTemplate?.Id == revision.Id) _lastSavedTemplate = revision;
+                    Reload(revision.Id);
+                }
+            }
+            catch (Exception ex) { await Message(L10n.T("Template.Edit"), ex.Message, dialog); }
+            finally { edit.IsEnabled = use.IsEnabled; }
+        };
         import.Click += async (_, _) =>
         {
             import.IsEnabled = false;
@@ -123,6 +142,35 @@ internal sealed partial class LinuxMainWindow
             foreach (var section in sections) section.Clear();
             custom?.Dispose();
         }
+    }
+
+    private async Task<LabelTemplate?> EditTemplateDetails(LabelTemplate template, Window owner)
+    {
+        var form = new StackPanel { Spacing = 8 };
+        var name = TextBox(template.Name);
+        var material = TextBox(template.Material);
+        name.MaxLength = material.MaxLength = 200;
+        Field(form, L10n.T("Template.Name"), name);
+        Field(form, L10n.T("Template.Material"), material);
+
+        NumericUpDown? notchLength = null;
+        if (template.Layout.AlternateNotch is { } notch)
+        {
+            notchLength = Number(Mm(notch.HeightUm), 0.001m, Mm(template.Layout.MediaHeightUm));
+            Field(form, L10n.T("Setup.NotchLength"), notchLength);
+        }
+        if (!await ConfirmForm(L10n.T("Template.Edit"), form, L10n.T("Template.Save"), owner: owner)) return null;
+        var layout = template.Layout.Clone();
+        if (notchLength is not null)
+            GeometryOperations.ResizeNotch(layout, ToUm(notchLength));
+        var newName = (name.Text ?? "").Trim();
+        var newMaterial = (material.Text ?? "").Trim();
+        if (template.Name == newName && template.Material == newMaterial &&
+            template.Layout.AlternateNotch == layout.AlternateNotch) return null;
+        var revision = template.WithDetails(newName, newMaterial, layout);
+        if (!_templates.Install(revision))
+            throw new InvalidOperationException(L10n.T("Template.VersionAlreadyInstalled"));
+        return revision;
     }
 
     private async Task SaveTemplate()

@@ -124,10 +124,14 @@ public class LabelGeometry
     public long GapBottomUm { get; set; }  // Distance to the next label (снизу)
 }
 
-/// <summary>A recess in the right edge of the material, measured in microns.</summary>
-public sealed record MediaNotch(long DepthUm, long HeightUm, long CenterYUm)
+public enum MediaNotchSide { Right, Left }
+
+/// <summary>A recess at an edge of the material, measured in microns.</summary>
+public sealed record MediaNotch(long DepthUm, long HeightUm, long CenterYUm,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    MediaNotchSide Side = MediaNotchSide.Right)
 {
-    internal bool Fits(long widthUm, long heightUm) => DepthUm > 0 && DepthUm < widthUm &&
+    internal bool Fits(long widthUm, long heightUm) => Enum.IsDefined(Side) && DepthUm > 0 && DepthUm < widthUm &&
         HeightUm > 0 && HeightUm <= heightUm && CenterYUm >= HeightUm / 2 &&
         CenterYUm <= heightUm - (HeightUm - HeightUm / 2);
 }

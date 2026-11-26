@@ -324,7 +324,7 @@ public static class SelfTest
         catch (InvalidDataException) { manualOverflow = true; }
         Check("print: ручной шрифт сверх рамки отклоняется", manualOverflow);
         Check("strip: длина учитывает межэтикеточный зазор", LabelSequence.CalculateLengthUm(30000, 3, 2000) == 94000);
-        var terminal = TemplateLibrary.LoadFile(Path.Combine(AppContext.BaseDirectory, "Catalog", "meyertec-terminal-50x10.mtemplate"));
+        var terminal = TemplateLibrary.LoadFile(Path.Combine(AppContext.BaseDirectory, "Catalog", "meyertec-terminal-50x6.mtemplate"));
         var terminalStock = terminal.Layout.Clone();
         terminalStock.Objects.Add(new LabelObject
         {
@@ -336,32 +336,39 @@ public static class SelfTest
         using (var printed = LabelPrintRenderer.Render(stockPages[1], terminal.Print, 300, 300))
         using (var preview = LabelPrintRenderer.Render(stockPages[1], terminal.Print, 300, 300, showMedia: true))
         {
-            Check("print: на секции с вырезом исключается только область выреза",
-                plain.Width == 591 && plain.Height == 118 && plain.GetPixel(584, 59).R < 128 &&
-                printed.GetPixel(584, 59).R == 255 && printed.GetPixel(584, 28).R < 128 &&
-                printed.GetPixel(534, 35).R < 128 && printed.GetPixel(530, 59).R < 128);
-            Check("preview: вырез виден на правом крае", preview.GetPixel(584, 59).R < 250);
+            Check("print: на секции с вырезом исключается только область слева",
+                plain.Width == 591 && plain.Height == 71 && plain.GetPixel(6, 35).R < 128 &&
+                printed.GetPixel(6, 35).R == 255 && printed.GetPixel(6, 15).R < 128 &&
+                printed.GetPixel(56, 19).R < 128 && printed.GetPixel(61, 35).R < 128 && printed.GetPixel(584, 35).R < 128);
+            Check("preview: вырез виден на левом крае", preview.GetPixel(6, 35).R < 250);
         }
         var terminalPrintPages = LabelPrintPages.Create(terminal.Layout, [new LabelItem { Fields = new() { ["C0"] = "X2" } }], true);
         var stripPrint = new PrintSettings { Copies = 2, Temperature = 19 };
         static GodexRaster RenderStripSample(LabelLayout page, PrintSettings settings, int dpi)
         {
             var column = page.Objects[0].Content.Text[^1] - '1' + (page.ActiveNotch is null ? 0 : 2);
-            return GodexRaster.Create(591, 118, (x, y) => y == 0 && x == column);
+            return GodexRaster.Create(591, 71, (x, y) => y == 0 && x == column);
         }
         var strip = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, stripPrint, RenderStripSample, 0, 4,
             CancellationToken.None);
-        var stripHeader = "^Q40,0,0\r\n^W50\r\n^P1\r\n^C1\r\n^R0\r\n^H19\r\n^L\r\nQ0,0,74,472\r"u8;
+        var stripHeader = "^Q24,0,0\r\n^W50\r\n^P1\r\n^C1\r\n^R0\r\n^H19\r\n^L\r\nQ0,0,74,283\r"u8;
         Check("print: один растр сохраняет записи на всех секциях между копиями",
             strip.AsSpan().StartsWith(stripHeader) && strip.AsSpan().EndsWith("E\r\n"u8) &&
-            strip.Length == stripHeader.Length + 74 * 472 + 3 &&
-            strip[stripHeader.Length] == 0x80 && strip[stripHeader.Length + 118 * 74] == 0x10 &&
-            strip[stripHeader.Length + 236 * 74] == 0x80 && strip[stripHeader.Length + 354 * 74] == 0x10);
+            strip.Length == stripHeader.Length + 74 * 283 + 3 &&
+            strip[stripHeader.Length] == 0x80 && strip[stripHeader.Length + 71 * 74] == 0x10 &&
+            strip[stripHeader.Length + 142 * 74] == 0x80 && strip[stripHeader.Length + 213 * 74] == 0x10);
         var notchFirst = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, stripPrint, RenderStripSample, 0, 4,
             CancellationToken.None, startOnNotchedSection: true);
         Check("print: старт с выреза меняет чередование без пропуска первой записи",
             notchFirst.AsSpan().StartsWith(stripHeader) && notchFirst.Length == strip.Length &&
-            notchFirst[stripHeader.Length] == 0x20 && notchFirst[stripHeader.Length + 118 * 74] == 0x40);
+            notchFirst[stripHeader.Length] == 0x20 && notchFirst[stripHeader.Length + 71 * 74] == 0x40);
+        var aligned = GodexPrintJob.EncodeContinuousBlock(terminalPrintPages, terminal.Print, RenderStripSample, 0, 1,
+            CancellationToken.None);
+        var alignedHeader = "^Q7.5,0,0\r\n^W50\r\n^P1\r\n^C1\r\n^R0\r\n^L\r\nQ0,0,74,89\r"u8;
+        Check("print: датчик задаёт начало первой секции через 1,5 мм от конца выреза",
+            aligned.AsSpan().StartsWith(alignedHeader) && aligned.Length == alignedHeader.Length + 74 * 89 + 3 &&
+            aligned.AsSpan(alignedHeader.Length, 18 * 74).IndexOfAnyExcept((byte)0) < 0 &&
+            aligned[alignedHeader.Length + 18 * 74] == 0x80);
         try
         {
             WstxIo.Write("raster formatting", fittedLayout, wstxPath);

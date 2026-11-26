@@ -43,6 +43,7 @@ public sealed class PrintSettingsDialog : BrandForm
     private readonly ComboBox? _startSection;
     private readonly CheckBox? _alignToNotch;
     private readonly NumericUpDown _width = Number(1, 300, 60), _height = Number(1, 762, 30);
+    private readonly NumericUpDown? _notchLength;
     private readonly NumericUpDown _offsetX = Number(-50, 50, 0), _offsetY = Number(-50, 50, 0);
     private readonly NumericUpDown _copies = Number(1, 500, 1, 0);
     private readonly NumericUpDown _heat = Number(0, 19, 10, 0), _stop = Number(0, 40, 0, 0);
@@ -59,6 +60,7 @@ public sealed class PrintSettingsDialog : BrandForm
     private sealed record ConnectionOption(string Key, string Caption) { public override string ToString() => Caption; }
     private readonly bool _forPrint;
     private readonly bool _hasNotch;
+    private readonly LabelLayout _layout;
     private readonly PrintSettings _original;
     private bool _updating;
     private bool _testing;
@@ -67,6 +69,7 @@ public sealed class PrintSettingsDialog : BrandForm
     public string? PrinterModel => _models.SelectedItem as string;
     public long MediaWidthUm => Units.MmToUm((double)_width.Value);
     public long MediaHeightUm => Units.MmToUm((double)_height.Value);
+    public long? NotchHeightUm => _notchLength is null ? null : Units.MmToUm((double)_notchLength.Value);
     public bool IncludeImported => _imported.Checked;
     public int RangeFrom => (int)_from.Value;
     public int RangeTo => (int)_to.Value;
@@ -76,6 +79,7 @@ public sealed class PrintSettingsDialog : BrandForm
     {
         SuspendLayout();
         _forPrint = forPrint;
+        _layout = layout;
         _hasNotch = layout.AlternateNotch is not null;
         _importedCount = importedCount;
         _original = project.Print ?? new PrintSettings();
@@ -127,8 +131,10 @@ public sealed class PrintSettingsDialog : BrandForm
         var jobRow = 1;
         Add(job, jobRow++, LabeledField("Setup.Width", _width),
             LabeledField(_hasNotch ? "Setup.FeedPitch" : "Setup.Height", _height));
-        if (_hasNotch)
+        if (layout.AlternateNotch is { } notch)
         {
+            _notchLength = Number(.001m, 762, Math.Clamp(notch.HeightUm / 1000m, .001m, 762m));
+            Add(job, jobRow++, LabeledField("Setup.NotchLength", _notchLength));
             _alignToNotch = new CheckBox
             {
                 Text = L10n.T("Print.AlignToNotch"), AutoSize = true, Checked = _original.AlignToNotch,
@@ -516,6 +522,15 @@ public sealed class PrintSettingsDialog : BrandForm
             ShowStatus(string.Format(L10n.T("Setup.MediaLimits"), minWidth, maxWidth, minLength, plugin.MaxPrintLengthMm),
                 error: true, field: invalidWidth ? _width : _height);
             return;
+        }
+        if (_notchLength is not null)
+        {
+            try { GeometryOperations.ResizeNotchedStockPitch(_layout.Clone(), MediaHeightUm, NotchHeightUm); }
+            catch (InvalidDataException ex)
+            {
+                ShowStatus(ex.Message, error: true, field: _notchLength);
+                return;
+            }
         }
         var backend = SelectedBackend;
         var driver = backend == GodexPrintJob.DriverBackend;

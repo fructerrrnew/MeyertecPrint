@@ -156,8 +156,10 @@ internal sealed class LabelRasterPlan
         {
             // The physical cutout stays fixed when the artwork moves.
             var top = notch.CenterYUm - notch.HeightUm / 2;
-            cutout = System.Drawing.Rectangle.FromLTRB(Dot(layout.MediaWidthUm - notch.DepthUm, dpiX),
-                Dot(top, dpiY), width, Dot(top + notch.HeightUm, dpiY));
+            var onLeft = notch.Side == MediaNotchSide.Left;
+            var left = onLeft ? 0 : Dot(layout.MediaWidthUm - notch.DepthUm, dpiX);
+            var right = onLeft ? Dot(notch.DepthUm, dpiX) : width;
+            cutout = System.Drawing.Rectangle.FromLTRB(left, Dot(top, dpiY), right, Dot(top + notch.HeightUm, dpiY));
         }
         return new LabelRasterPlan(width, height, elements, cutout);
     }

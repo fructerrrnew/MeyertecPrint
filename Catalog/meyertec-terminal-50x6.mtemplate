@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 3,
+  "id": "meyertec-terminal-50x10",
+  "version": 2,
+  "name": "Terminal marker · 50 × 6 mm",
+  "material": "Continuous terminal marking strip",
+  "source": "50 mm across the head, 6 mm feed pitch, left-edge notch aligned with the sensor. Initial notch length is 3 mm and can be calibrated.",
+  "printerModel": "G530",
+  "layout": {
+    "mediaWidthUm": 50000,
+    "mediaHeightUm": 6000,
+    "alternateNotch": { "depthUm": 5000, "heightUm": 3000, "centerYUm": 3000, "side": "left" },
+    "geometry": { "labelsInRow": 1, "widthUm": 43000, "heightUm": 4800, "leftUm": 6000, "topUm": 600, "rightUm": 1000, "gapBottomUm": 600 },
+    "rows": [{ "heightUm": 4800, "cells": [{ "widthUm": 43000 }] }],
+    "objects": [
+      {
+        "xUm": 6000,
+        "yUm": 600,
+        "widthUm": 43000,
+        "heightUm": 4800,
+        "content": { "type": "text", "text": "X1", "autoFitText": true }
+      }
+    ]
+  },
+  "print": { "copies": 1, "mediaGapMm": 0, "alignToNotch": true }
+}

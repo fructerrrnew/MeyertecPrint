@@ -140,14 +140,16 @@ try
         updatedTemplate.Id == loadedTemplate.Id && updatedTemplate.Version == 2 &&
         library.Install(updatedTemplate) && !library.Install(loadedTemplate) && library.GetAll().Single().Name == "Updated");
 
-    var terminalTemplate = TemplateLibrary.LoadFile(Path.Combine(AppContext.BaseDirectory, "Catalog", "meyertec-terminal-50x10.mtemplate"));
+    var terminalTemplate = TemplateLibrary.LoadFile(Path.Combine(AppContext.BaseDirectory, "Catalog", "meyertec-terminal-50x6.mtemplate"));
     var terminal = terminalTemplate.CreateProject("Terminal markers");
     var terminalLayout = terminal.Ribbon.GetLayout();
     var terminalPages = LabelPrintPages.Create(terminalLayout, terminal.Ribbon.Labels, true);
-    var notch = new MediaNotch(5_000, 5_000, 5_000);
-    Check("Terminal template opens with three editable 50 × 10 mm sections and no gap",
-        terminalLayout.MediaWidthUm == 50_000 && terminalLayout.MediaHeightUm == 10_000 &&
-        terminal.Print.MediaGapMm == 0 && terminalPages.Count == 3 &&
+    var notch = new MediaNotch(5_000, 3_000, 3_000, MediaNotchSide.Left);
+    Check("Terminal template opens with three editable 50 × 6 mm sections and sensor alignment",
+        terminalTemplate is { Version: 2, SchemaVersion: 3 } &&
+        terminalLayout.MediaWidthUm == 50_000 && terminalLayout.MediaHeightUm == 6_000 &&
+        terminal.Print.MediaGapMm == 0 && terminal.Print.AlignToNotch && terminalPages.Count == 3 &&
+        terminal.Print.PrintBackend == (OperatingSystem.IsWindows() ? "godex-sdk" : "godex-direct") &&
         terminal.Ribbon.Labels.All(item => !item.UseLayout && item.Fields["C0"] == "X1"));
     terminal.Ribbon.Labels[0].Fields["C0"] = "X2";
     terminal.Ribbon.Labels[1].Fields["C0"] = "X3";
@@ -156,8 +158,8 @@ try
         printPages[0].ActiveNotch is null && printPages[1].ActiveNotch == notch && printPages[2].ActiveNotch is null &&
         printPages.Select(page => page.Objects[0].Content.Text).SequenceEqual(["X1", "X2", "X3"]));
     Check("Printing consumes one pitch per section",
-        LabelSequence.CalculateFeedLengthUm(terminalLayout, 3) == 30_000 &&
-        LabelSequence.CalculateFeedLengthUm(terminalLayout, 1) == 10_000 &&
+        LabelSequence.CalculateFeedLengthUm(terminalLayout, 3) == 18_000 &&
+        LabelSequence.CalculateFeedLengthUm(terminalLayout, 1) == 6_000 &&
         LabelSequence.CalculateFeedLengthUm(layout, 3, 2_000) == 94_000);
     Check("A notched start switches the physical shapes without consuming a label",
         LabelPrintPages.AtFeedPosition(printPages[0], 0, startOnNotchedSection: true).ActiveNotch == notch &&
@@ -168,24 +170,40 @@ try
     var notchedRaster = LabelRasterPlan.Create(stockPreview[1], shifted, 300, 300);
     Check("Preview shows the physical notch and the artwork on the same section",
         stockPreview[0].ActiveNotch is null && stockPreview[1].ActiveNotch == notch && stockPreview[2].ActiveNotch is null &&
-        notchedRaster is { Width: 591, Height: 118, Cutout: { X: 531, Y: 30, Right: 591, Bottom: 89 } } &&
-        notchedRaster.Elements.Any(item => item.Content.Text == "X1"));
+        notchedRaster is { Width: 591, Height: 71, Cutout: { X: 0, Y: 18, Right: 59, Bottom: 53 } } &&
+        terminalLayout.Objects[0] is { XUm: 6_000, YUm: 600, HeightUm: 4_800 } &&
+        notchedRaster.Elements.Any(item => item.Content.Text == "X1" && item.Bounds.Left > notchedRaster.Cutout.Value.Right));
     var adjustedPitch = terminalLayout.Clone();
-    GeometryOperations.ResizeNotchedStockPitch(adjustedPitch, 6_000);
-    Check("Measured feed pitch scales content and notch in the feed direction only",
-        adjustedPitch.MediaWidthUm == 50_000 && adjustedPitch.MediaHeightUm == 6_000 &&
-        adjustedPitch.AlternateNotch == new MediaNotch(5_000, 3_000, 3_000) &&
-        adjustedPitch.Rows[0].HeightUm == 4_800 && adjustedPitch.Objects[0] is
-            { XUm: 1_000, WidthUm: 43_000, YUm: 600, HeightUm: 4_800, Content.Text: "X1" } &&
-        LabelRasterPlan.Create(adjustedPitch, terminal.Print, 300, 300).Height == 71);
+    GeometryOperations.ResizeNotchedStockPitch(adjustedPitch, 8_000, 3_500);
+    Check("Measured notch length is independent of pitch and its left edge is preserved",
+        adjustedPitch.MediaWidthUm == 50_000 && adjustedPitch.MediaHeightUm == 8_000 &&
+        adjustedPitch.AlternateNotch == new MediaNotch(5_000, 3_500, 4_000, MediaNotchSide.Left) &&
+        adjustedPitch.Rows[0].HeightUm == 6_400 && adjustedPitch.Objects[0] is
+            { XUm: 6_000, WidthUm: 43_000, YUm: 800, HeightUm: 6_400, Content.Text: "X1" } &&
+        LabelRasterPlan.Create(adjustedPitch, terminal.Print, 300, 300).Height == 94);
+    var draft = terminalLayout.Clone();
+    GeometryOperations.ResizeNotch(draft, 4_000);
+    var revision = terminalTemplate.WithDetails("Клеммная лента", "Пластик", draft);
+    Check("Editing a template updates its revision and calibrated notch",
+        revision is { Version: 3, Name: "Клеммная лента", Material: "Пластик", Layout.AlternateNotch.HeightUm: 4_000, Print.AlignToNotch: true } &&
+        revision.Id == terminalTemplate.Id && terminalTemplate.Layout.AlternateNotch == notch &&
+        Rejects(() => GeometryOperations.ResizeNotch(draft, 6_001)) && draft.AlternateNotch?.HeightUm == 4_000);
     var terminalPath = Path.Combine(tmp, "terminal.mprj");
     ProjectFileIo.Save(terminal, terminalPath);
     var restoredTerminal = ProjectFileIo.Load(terminalPath);
     var exportedTerminal = LabelTemplate.FromProject(restoredTerminal, terminalTemplate.Name, terminalTemplate.Material);
     TemplateLibrary.SaveFile(exportedTerminal, templatePath);
     Check("Project and exported template retain notch geometry",
-        restoredTerminal.Version == 5 && restoredTerminal.Ribbon.GetLayout().AlternateNotch == notch &&
-        TemplateLibrary.LoadFile(templatePath) is { SchemaVersion: 2, Layout.AlternateNotch: { DepthUm: 5_000 } });
+        restoredTerminal.Version == 7 && restoredTerminal.Ribbon.GetLayout().AlternateNotch == notch && restoredTerminal.Print.AlignToNotch &&
+        TemplateLibrary.LoadFile(templatePath) is { SchemaVersion: 3, Layout.AlternateNotch: { DepthUm: 5_000, Side: MediaNotchSide.Left } });
+    var legacyRight = terminalLayout.Clone();
+    legacyRight.AlternateNotch = new MediaNotch(5_000, 3_000, 3_000);
+    var legacyTerminal = new ProjectFile { Ribbon = new RibbonData { Layout = legacyRight } };
+    var legacyTerminalPath = Path.Combine(tmp, "right-notch.mprj");
+    ProjectFileIo.Save(legacyTerminal, legacyTerminalPath);
+    Check("Existing right-notch projects still load and retain format version 5",
+        ProjectFileIo.Load(legacyTerminalPath) is { Version: 5, Ribbon.Layout.AlternateNotch.Side: MediaNotchSide.Right } &&
+        !File.ReadAllText(legacyTerminalPath).Contains("\"Side\"", StringComparison.Ordinal));
     LabelPrintPages.SetApplyLayoutToAll(terminal.Ribbon, false);
     terminalLayout.Objects[0].Content.FontSizePt = 18;
     var individual = LabelPrintPages.ResolveRecordLayout(terminal.Ribbon, terminal.Ribbon.Labels[0]);
@@ -206,7 +224,7 @@ try
     var independentProject = ProjectFileIo.Load(terminalPath);
     var exportedPages = LabelPrintPages.Create(independentProject.Ribbon);
     Check("Individual layout settings and data survive saving and reopening",
-        independentProject.Version == 6 && !independentProject.Ribbon.ApplyLayoutToAll &&
+        independentProject.Version == 7 && !independentProject.Ribbon.ApplyLayoutToAll &&
         exportedPages[1].Objects[0].Content is { FontSizePt: 12, Text: "0002\nКлемма" });
     foreach (var extension in new[] { ".csv", ".xlsx" })
     {
@@ -216,7 +234,7 @@ try
             SpreadsheetReader.ReadFile(exportPath).Select(row => row.Single()).SequenceEqual(["C1", "X1", "0002\nКлемма", "X3"]));
     }
     var invalidNotch = terminalLayout.Clone();
-    invalidNotch.AlternateNotch = new MediaNotch(5_000, 5_000, 0);
+    invalidNotch.AlternateNotch = notch with { CenterYUm = 0 };
     Check("Invalid notch geometry and lossy WSTX export are rejected",
         Rejects(() => LabelPrintLayout.Create(invalidNotch)) && Rejects(() => WstxIo.Write("Terminal", terminalLayout, templatePath)));
 

@@ -9,7 +9,7 @@ namespace MeyertecPrint;
 public sealed class LabelTemplate
 {
     public const string FileExtension = ".mtemplate";
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     [JsonRequired] public int SchemaVersion { get; set; } = 1;
     [JsonRequired] public string Id { get; set; } = string.Empty;
@@ -25,13 +25,16 @@ public sealed class LabelTemplate
     public ProjectFile CreateProject(string name)
     {
         TemplateLibrary.Validate(this);
+        var print = CopyPrintProfile(Print);
+        if (print.AlignToNotch)
+            print.PrintBackend = OperatingSystem.IsWindows() ? "godex-sdk" : "godex-direct";
         return new ProjectFile
         {
             Name = name.Trim(),
             PrinterModel = PrinterModel,
             TemplateId = Id,
             TemplateVersion = Version,
-            Print = CopyPrintProfile(Print),
+            Print = print,
             Ribbon = new RibbonData
             {
                 LabelTypeName = Name,
@@ -50,7 +53,7 @@ public sealed class LabelTemplate
         var layout = project.Ribbon.GetLayout();
         var template = new LabelTemplate
         {
-            SchemaVersion = layout.AlternateNotch is null ? 1 : CurrentSchemaVersion,
+            SchemaVersion = RequiredSchema(layout),
             Id = previous?.Id ?? Guid.NewGuid().ToString("N"),
             Version = previous?.NextVersion() ?? 1,
             Name = name.Trim(),
@@ -65,20 +68,26 @@ public sealed class LabelTemplate
         return template;
     }
 
-    public LabelTemplate WithPreview(byte[]? previewPng)
+    public LabelTemplate WithPreview(byte[]? previewPng) =>
+        Revise(Name, Material, Layout, previewPng is null ? null : Convert.ToBase64String(previewPng));
+
+    public LabelTemplate WithDetails(string name, string material, LabelLayout layout) =>
+        Revise(name.Trim(), material.Trim(), layout, PreviewPngBase64);
+
+    private LabelTemplate Revise(string name, string material, LabelLayout layout, string? previewPngBase64)
     {
         var template = new LabelTemplate
         {
-            SchemaVersion = SchemaVersion,
+            SchemaVersion = Math.Max(SchemaVersion, RequiredSchema(layout)),
             Id = Id,
             Version = NextVersion(),
-            Name = Name,
-            Material = Material,
+            Name = name,
+            Material = material,
             Source = Source,
             PrinterModel = PrinterModel,
-            Layout = Layout.Clone(),
+            Layout = layout.Clone(),
             Print = CopyPrintProfile(Print),
-            PreviewPngBase64 = previewPng is null ? null : Convert.ToBase64String(previewPng)
+            PreviewPngBase64 = previewPngBase64
         };
         TemplateLibrary.Validate(template);
         return template;
@@ -86,6 +95,13 @@ public sealed class LabelTemplate
 
     private int NextVersion() => Version < int.MaxValue ? Version + 1 : throw TemplateLibrary.Error(
         "The template has reached the maximum version.", "Достигнут максимальный номер версии шаблона.");
+
+    internal static int RequiredSchema(LabelLayout layout) => layout.AlternateNotch switch
+    {
+        null => 1,
+        { Side: MediaNotchSide.Left } => 3,
+        _ => 2
+    };
 
     // Connection details belong to the local project. Shared templates only carry portable print settings.
     private static PrintSettings CopyPrintProfile(PrintSettings? source) => new()
@@ -95,7 +111,8 @@ public sealed class LabelTemplate
         OffsetYMm = source?.OffsetYMm ?? 0,
         Temperature = source?.Temperature,
         CutOffsetMm = source?.CutOffsetMm,
-        MediaGapMm = source?.MediaGapMm ?? 0
+        MediaGapMm = source?.MediaGapMm ?? 0,
+        AlignToNotch = source?.AlignToNotch ?? false
     };
 }
 
@@ -222,12 +239,13 @@ public sealed class TemplateLibrary
             settings.MediaGapMm < 0 ||
             settings.CutOffsetMm is double cut && !double.IsFinite(cut))
             throw Error("Invalid layout or print profile.", "Проверьте геометрию шаблона и параметры печати.");
-        if (layout.AlternateNotch is not null)
+        if (template.SchemaVersion < LabelTemplate.RequiredSchema(layout))
+            throw Error("The template format is too old for its notch geometry.", "Версия формата шаблона не поддерживает эту геометрию выреза.");
+        if (settings.AlignToNotch && layout.AlternateNotch is null)
+            throw new InvalidDataException(L10n.T("Print.NotchAlignmentUnsupported"));
+        if (layout.AlternateNotch is not null && settings.MediaGapMm != 0)
         {
-            if (template.SchemaVersion < 2)
-                throw Error("An alternating notch requires template schema 2.", "Для чередующегося выреза нужен формат шаблона версии 2.");
-            if (settings.MediaGapMm != 0)
-                throw new InvalidDataException(L10n.T("Print.ContinuousMediaGap"));
+            throw new InvalidDataException(L10n.T("Print.ContinuousMediaGap"));
         }
 
         try

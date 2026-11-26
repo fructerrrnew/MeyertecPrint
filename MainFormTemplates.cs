@@ -178,56 +178,97 @@ internal static class TemplateImage
 
 internal sealed class TemplateDetailsDialog : BrandForm
 {
-    private readonly TextBox _name = new() { Dock = DockStyle.Top };
-    private readonly TextBox _material = new() { Dock = DockStyle.Top };
+    private readonly TextBox _name = new() { MaxLength = 200 };
+    private readonly TextBox _material = new() { MaxLength = 200 };
     private readonly CheckBox _new = new() { AutoSize = true, Dock = DockStyle.Top };
 
     public string TemplateName => _name.Text.Trim();
     public string Material => _material.Text.Trim();
     public bool SaveNew => _new.Checked;
+    public LabelLayout? EditedLayout { get; private set; }
 
     public TemplateDetailsDialog(string name, string material, int? currentVersion)
+        : this(name, material, currentVersion, null) { }
+
+    public TemplateDetailsDialog(LabelTemplate template)
+        : this(template.Name, template.Material, template.Version, template.Layout) { }
+
+    private TemplateDetailsDialog(string name, string material, int? currentVersion, LabelLayout? layout)
     {
+        var notch = layout?.AlternateNotch;
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = L10n.T("Template.Save");
+        Text = L10n.T(layout is null ? "Template.Save" : "Template.Edit");
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
-        ClientSize = new Size(460, 245);
+        ClientSize = new Size(460, notch is null ? 245 : 305);
         MaximizeBox = MinimizeBox = ShowIcon = false;
         Font = Theme.UiFont();
         BackColor = Theme.Surface;
         _name.Text = name;
         _material.Text = material;
         _new.Checked = currentVersion is null;
-        _new.Visible = currentVersion is not null;
         _new.Text = L10n.T("Template.SaveNew");
         var content = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(16)
         };
-        void Field(TextBox box, string key)
+        void Field(Control box, string key, int width = 410)
         {
-            var label = new Label { Text = L10n.T(key), AutoSize = true };
+            var label = new Label { Text = L10n.T(key), AutoSize = true, UseMnemonic = false };
             box.AccessibleName = label.Text;
-            box.Dock = DockStyle.None;
-            box.Width = 410;
+            box.Width = width;
             box.Margin = new Padding(0, 1, 0, 10);
             content.Controls.Add(label);
             content.Controls.Add(box);
         }
         Field(_name, "Template.Name");
         Field(_material, "Template.Material");
-        if (currentVersion is not null)
+        NumericUpDown? notchLength = null;
+        if (layout is not null && notch is not null)
         {
-            var version = new Label { AutoSize = true, Text = string.Format(L10n.T("Template.NewVersion"), currentVersion.Value + 1) };
+            notchLength = new NumericUpDown
+            {
+                Minimum = .001m,
+                Maximum = layout.MediaHeightUm / 1000m,
+                Value = notch.HeightUm / 1000m,
+                Increment = .1m,
+                DecimalPlaces = 3,
+                TextAlign = HorizontalAlignment.Right
+            };
+            Field(notchLength, "Setup.NotchLength", 150);
+        }
+        if (currentVersion is int versionNumber && versionNumber < int.MaxValue)
+        {
+            var version = new Label { AutoSize = true, Text = string.Format(L10n.T("Template.NewVersion"), versionNumber + 1) };
             content.Controls.Add(version);
-            content.Controls.Add(_new);
             _new.CheckedChanged += (_, _) => version.Visible = !_new.Checked;
         }
-        var save = new Button { Text = L10n.T("Toolbar.Save"), DialogResult = DialogResult.OK, Enabled = TemplateName.Length > 0 };
+        if (layout is null && currentVersion is not null)
+            content.Controls.Add(_new);
+
+        var save = new Button { Text = L10n.T("Toolbar.Save"), Enabled = TemplateName.Length > 0 };
         _name.TextChanged += (_, _) => save.Enabled = TemplateName.Length > 0;
+        save.Click += (_, _) =>
+        {
+            if (layout is not null)
+            {
+                var revised = layout.Clone();
+                if (notchLength is not null)
+                {
+                    try { GeometryOperations.ResizeNotch(revised, Units.MmToUm((double)notchLength.Value)); }
+                    catch (InvalidDataException ex)
+                    {
+                        BrandMessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        notchLength.Focus();
+                        return;
+                    }
+                }
+                EditedLayout = revised;
+            }
+            DialogResult = DialogResult.OK;
+        };
         var cancel = new Button { Text = L10n.T("Dialog.Cancel"), DialogResult = DialogResult.Cancel };
         Controls.Add(content);
         Controls.Add(Theme.DialogFooter(save, cancel));
@@ -245,6 +286,7 @@ internal sealed class TemplateLibraryDialog : BrandForm
     private readonly Label _info = new() { Dock = DockStyle.Top, Height = 52, Padding = new Padding(8), UseMnemonic = false };
     private readonly TextBox _projectName = new() { Dock = DockStyle.Top };
     private readonly Button _create = new() { DialogResult = DialogResult.OK };
+    private readonly Button _edit = new() { AutoSize = true };
     private readonly Button _picture = new() { AutoSize = true };
     private readonly Button _export = new() { AutoSize = true };
 
@@ -282,15 +324,18 @@ internal sealed class TemplateLibraryDialog : BrandForm
 
         var tools = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40, Padding = new Padding(14, 0, 0, 0) };
         var import = new Button { Text = L10n.T("Template.Import"), AutoSize = true };
+        _edit.Text = L10n.T("Template.Edit");
         _picture.Text = L10n.T("Template.SetPreview");
         _export.Text = L10n.T("Template.Export");
         Theme.StyleButton(import);
+        Theme.StyleButton(_edit);
         Theme.StyleButton(_picture);
         Theme.StyleButton(_export);
         import.Click += (_, _) => Import();
+        _edit.Click += (_, _) => EditTemplate();
         _picture.Click += (_, _) => ChangePreview();
         _export.Click += (_, _) => Export();
-        tools.Controls.AddRange([import, _picture, _export]);
+        tools.Controls.AddRange([import, _edit, _picture, _export]);
 
         var nameRow = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 41, ColumnCount = 2, Padding = new Padding(14, 2, 14, 0) };
         nameRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -329,7 +374,7 @@ internal sealed class TemplateLibraryDialog : BrandForm
     {
         var template = SelectedTemplate;
         _projectName.Text = template?.Name ?? "";
-        _picture.Enabled = _export.Enabled = _create.Enabled = template is not null;
+        _edit.Enabled = _picture.Enabled = _export.Enabled = _create.Enabled = template is not null;
         _preview.Image?.Dispose();
         _preview.Image = null;
         if (template is null)
@@ -385,6 +430,23 @@ internal sealed class TemplateLibraryDialog : BrandForm
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException
             or System.Runtime.InteropServices.ExternalException or OutOfMemoryException)
         { BrandMessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+    }
+
+    private void EditTemplate()
+    {
+        if (SelectedTemplate is not { } template) return;
+        using var dialog = new TemplateDetailsDialog(template);
+        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.EditedLayout is not { } layout) return;
+        if (template.Name == dialog.TemplateName && template.Material == dialog.Material
+            && template.Layout.AlternateNotch == layout.AlternateNotch) return;
+        try
+        {
+            var updated = template.WithDetails(dialog.TemplateName, dialog.Material, layout);
+            if (!_library.Install(updated)) throw new InvalidDataException(L10n.T("Template.VersionAlreadyInstalled"));
+            Reload(updated.Id);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException)
+        { BrandMessageBox.Show(this, ex.Message, _edit.Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
 
     private void Export()

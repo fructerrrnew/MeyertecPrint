@@ -394,15 +394,15 @@ public partial class LabelEditorControl : UserControl
         ConfigureObjectUnits();
     }
 
-    public void ApplyPrintSettings(PrintSettings settings, long mediaWidthUm, long mediaHeightUm)
+    public void ApplyPrintSettings(PrintSettings settings, long mediaWidthUm, long mediaHeightUm, long? notchHeightUm = null)
     {
         CommitInline();
-        if (_layout.AlternateNotch is not null)
+        if (_layout.AlternateNotch is { } notch)
         {
-            if (_layout.MediaHeightUm != mediaHeightUm)
+            if (_layout.MediaHeightUm != mediaHeightUm || notchHeightUm.HasValue && notchHeightUm.Value != notch.HeightUm)
             {
                 var previous = _layout.Clone();
-                GeometryOperations.ResizeNotchedStockPitch(_layout, mediaHeightUm);
+                GeometryOperations.ResizeNotchedStockPitch(_layout, mediaHeightUm, notchHeightUm);
                 _undo.Push(previous);
             }
         }

@@ -552,22 +552,26 @@ internal sealed partial class LinuxMainWindow : Window
     private async Task EditMedia()
     {
         var old = Layout;
-        var notched = old.AlternateNotch is not null;
+        var notchLength = old.AlternateNotch is { } notch ? Number(Mm(notch.HeightUm), 0.001m, 762) : null;
+        var notched = notchLength is not null;
         var form = new StackPanel { Spacing = 8 };
         var w = Number(Mm(old.MediaWidthUm), 1, 300);
         var h = Number(Mm(old.MediaHeightUm), notched ? 4 : 1, 762);
         w.IsEnabled = !notched;
         Field(form, Tr("Ширина носителя, мм", "Media width, mm"), w);
         Field(form, notched ? L10n.T("Setup.FeedPitch") : Tr("Длина страницы, мм", "Page length, mm"), h);
-        if (notched)
+        if (notchLength is not null)
+        {
+            Field(form, L10n.T("Setup.NotchLength"), notchLength);
             form.Children.Add(new TextBlock
             {
                 Text = L10n.T("Setup.FixedNotchedStock"), TextWrapping = TextWrapping.Wrap
             });
+        }
         if (!await ConfirmForm(Tr("Носитель", "Media"), form, Tr("Применить", "Apply"))) return;
         var candidate = old.Clone();
-        if (notched)
-            GeometryOperations.ResizeNotchedStockPitch(candidate, ToUm(h));
+        if (notchLength is not null)
+            GeometryOperations.ResizeNotchedStockPitch(candidate, ToUm(h), ToUm(notchLength));
         else
         {
             candidate.MediaWidthUm = ToUm(w);
